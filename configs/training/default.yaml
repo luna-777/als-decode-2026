@@ -1,0 +1,21 @@
+# §B.1 — Stage 1 optimization defaults
+optimizer: adamw
+lr: 1.0e-3
+weight_decay: 1.0e-2
+scheduler: cosine
+warmup_epochs: 10
+
+batch_size: 64
+max_epochs: 200
+
+early_stop:
+  monitor: val/roc_auc
+  patience: 20
+  mode: max
+  min_delta: 0.001
+
+# Loss: 'weighted_bce' (default) or 'focal'
+loss: weighted_bce
+focal_gamma: 2.0      # only used when loss=focal
+
+mixed_precision: true  # §10.4

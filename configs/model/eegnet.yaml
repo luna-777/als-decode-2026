@@ -1,0 +1,20 @@
+name: eegnet
+
+# §A.4 — EEGNet Stage 1 (motor imagery) configuration
+# Use Braindecode reference implementation; do not re-implement.
+F1: 8               # temporal filters
+D: 2                # depth multiplier (spatial filters per temporal = F1*D = 16)
+F2: 16              # pointwise filters (= F1 * D by convention)
+kernel_length: 64   # temporal kernel ≈ 0.4 s at 160 Hz
+pool_mode: mean     # average pooling
+pool_size_1: 4
+pool_size_2: 8
+dropout: 0.25       # cross-subject setting (0.5 for within-subject)
+max_norm_spatial: 1.0
+max_norm_dense: 0.25
+activation: elu
+
+# Stage flag controls adapter insertion (off for Stage 1)
+stage: stage1
+insert_adapters: false
+adapter_reduction: 8   # reduction factor for bottleneck adapters (Stage 3)

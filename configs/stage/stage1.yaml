@@ -1,0 +1,8 @@
+stage: 1
+task: motor_imagery_vs_rest
+
+# §5.2 data construction
+positive_class: control        # imagined movement (cannot move; real-movement excluded)
+negative_class: idle           # rest intervals + eyes-open/closed baselines
+imagined_only: true            # runs 4,8,12 (L/R fists) + 6,10,14 (both fists/feet)
+include_baselines: true        # baseline runs 1 (eyes-open) and 2 (eyes-closed) → idle

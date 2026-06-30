@@ -1,0 +1,32 @@
+moabb_name: PhysionetMI
+paradigm: mi
+sfreq_target: 160.0          # native rate; no resampling for Stage 1
+
+# §4.1 — subjects 88, 92, 100 excluded by default (inconsistent annotations)
+exclude_subjects: [88, 92, 100]
+
+# §5.2 — sensorimotor channel subset (default) or all 64 (ablation)
+channel_config: sensorimotor  # switch to 'all' for the 64-channel ablation
+channels:
+  sensorimotor:
+    - FC3
+    - FC1
+    - FCz
+    - FC2
+    - FC4
+    - C5
+    - C3
+    - C1
+    - Cz
+    - C2
+    - C4
+    - C6
+    - CP3
+    - CP1
+    - CPz
+    - CP2
+    - CP4
+  all: null                  # null = use every available channel
+
+epoch_window: [0.0, 2.0]     # §5.2 — 2 s sliding window
+band: [8.0, 30.0]            # mu + beta

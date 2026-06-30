@@ -1,0 +1,9 @@
+name: csp_lda
+
+# §B.3 — MI classical baseline
+# Two variants: CSP+LDA (default) and Cov→TangentSpace→LR (tangent_space: true)
+n_components: 6        # CSP spatial filters (search range 4–8)
+classifier: lda        # 'lda' or 'logreg'
+
+# Set tangent_space: true for the Riemannian comparator (Cov → TangentSpace → LR)
+tangent_space: false

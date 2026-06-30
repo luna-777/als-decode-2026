@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Hydra outputs
+outputs/
+multirun/
+
+# W&B
+wandb/
+
+# Results (large; commit selectively)
+results/
+
+# macOS
+.DS_Store
+.AppleDouble
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Editors
+.idea/
+.vscode/
+*.code-workspace
+
+# Secrets
+.env
+.env.local

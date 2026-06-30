@@ -1,0 +1,12 @@
+# §5.7, §8.3 — Streaming event-stream evaluation (Stage 1 self-paced scoring)
+protocol: streaming
+
+# FPR targets for primary metric table (§5.6)
+idle_fpr_targets: [0.01, 0.05]   # 1 % and 5 %
+idle_fpr_per_min: 1.0             # 1 false activation per minute of idle (§5.5)
+
+# Decision layer defaults (§5.5, §B.2)
+debounce_k: 3         # consecutive windows above τ required before firing
+refractory_s: 5.0     # suppression window after an activation
+
+# τ is derived from validation idle-FPR, not hardcoded here

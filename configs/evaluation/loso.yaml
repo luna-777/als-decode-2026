@@ -1,0 +1,6 @@
+# §11.2 — Leave-one-subject-out evaluation (Stage 1 primary)
+protocol: loso
+
+# Subjects reserved as the never-seen final test set (drawn from the 106 available).
+# GroupKFold over the remaining subjects is used for hyperparameter selection (M3).
+held_out_n_subjects: 10

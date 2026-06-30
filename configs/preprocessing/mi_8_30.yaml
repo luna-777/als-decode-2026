@@ -1,0 +1,24 @@
+# Appendix C.1 — mi_8_30 recipe (Stage 1)
+# Steps execute in order; [fit-on-train] steps must never see val/test data.
+
+bandpass:
+  low: 8.0
+  high: 30.0
+  method: fir         # zero-phase FIR (MNE default)
+  phase: zero
+  fir_window: hamming # MNE default transition bands
+
+keep_sfreq: 160.0     # native rate; no resampling
+
+# Sliding-window epoching (§5.2)
+window_len_s: 2.0
+window_stride_s: 0.1
+
+# Robust per-channel scaling [fit-on-train] (§C.1 step 4)
+robust_scale: true
+
+# Training-only amplitude rejection (§C.1 step 6, §5.2)
+amplitude_reject_uv: 150.0
+
+# Optional Euclidean Alignment [fit-on-train] — off by default; ablation in §12.9
+euclidean_alignment: false

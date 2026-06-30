@@ -1,0 +1,13 @@
+defaults:
+  - stage: stage1
+  - dataset: physionet_mi
+  - preprocessing: mi_8_30
+  - model: eegnet
+  - training: default
+  - evaluation: loso
+  - _self_
+
+seed: 42
+output_dir: results/
+
+# Override on CLI: python -m src.train model=csp_lda evaluation=streaming seed=123
