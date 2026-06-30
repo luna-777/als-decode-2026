@@ -14,14 +14,45 @@ def build_mi_csp_pipeline(
     classifier: str = "lda",
     tangent_space: bool = False,
 ) -> Pipeline:
-    """Build a CSP+LDA or Cov→TangentSpace→LR sklearn Pipeline. §B.3.
+    """Build a CSP+LDA or Cov→TangentSpace→LR sklearn Pipeline for Stage 1. §B.3.
 
-    n_components: number of CSP spatial filters.
-    classifier: 'lda' or 'logreg'.
-    tangent_space: if True, use Cov→TangentSpace→LR instead of CSP.
-    Returns a fitted-able sklearn Pipeline.
+    n_components : number of CSP spatial filters (ignored when tangent_space=True).
+    classifier   : 'lda' or 'logreg' (only used in CSP path).
+    tangent_space: if True, use Cov→TangentSpace (Riemannian) → LogReg instead of CSP.
+
+    The returned Pipeline accepts (n_epochs, n_channels, n_times) arrays and fits
+    in a standard sklearn manner (fit / predict / predict_proba).
     """
-    raise NotImplementedError("Milestone 4")
+    if tangent_space:
+        from pyriemann.estimation import Covariances
+        from pyriemann.tangentspace import TangentSpace
+        from sklearn.linear_model import LogisticRegression
+
+        return Pipeline(
+            [
+                ("cov", Covariances(estimator="lwf")),
+                ("ts", TangentSpace(metric="riemann")),
+                ("clf", LogisticRegression(C=1.0, solver="lbfgs", max_iter=1000)),
+            ]
+        )
+
+    # CSP path — uses MNE's sklearn-compatible CSP
+    from mne.decoding import CSP
+    from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+    from sklearn.linear_model import LogisticRegression
+
+    csp = CSP(
+        n_components=n_components,
+        reg="ledoit_wolf",
+        log=True,
+        norm_trace=True,
+    )
+    if classifier == "logreg":
+        clf = LogisticRegression(C=1.0, solver="lbfgs", max_iter=1000)
+    else:
+        clf = LinearDiscriminantAnalysis()
+
+    return Pipeline([("csp", csp), ("clf", clf)])
 
 
 # Extension point for Stage 2/3 — not implemented in Stage 1.

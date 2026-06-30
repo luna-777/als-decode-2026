@@ -4,3 +4,10 @@ protocol: loso
 # Subjects reserved as the never-seen final test set (drawn from the 106 available).
 # GroupKFold over the remaining subjects is used for hyperparameter selection (M3).
 held_out_n_subjects: 10
+
+# Number of GroupKFold folds used for hyperparameter selection over dev subjects.
+n_splits: 5
+
+# Smoke-run knob: limit total subjects (null = use all). Set to a small number for
+# fast end-to-end testing before a full production run.
+max_subjects: null
