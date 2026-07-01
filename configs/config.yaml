@@ -9,5 +9,6 @@ defaults:
 
 seed: 42
 output_dir: results/
+fold: 0
 
 # Override on CLI: python -m src.train model=csp_lda evaluation=streaming seed=123
