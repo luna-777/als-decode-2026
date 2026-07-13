@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+
 
 @dataclass(frozen=True)
 class IntentEvent:
@@ -32,17 +34,35 @@ class IntentSwitch:
         refractory_s: float = 5.0,
         window_stride_s: float = 0.1,
     ) -> None:
-        raise NotImplementedError("Milestone 6")
+        self.tau = tau
+        self.debounce_k = debounce_k
+        self.refractory_s = refractory_s
+        self.window_stride_s = window_stride_s
+        self._consec: int = 0
+        self._last_fire_s: float = -np.inf
 
     def reset(self) -> None:
         """Reset internal state (consecutive-window counter, refractory timer)."""
-        raise NotImplementedError("Milestone 6")
+        self._consec = 0
+        self._last_fire_s = -np.inf
 
-    def step(
-        self, prob: float, timestamp_s: float
-    ) -> IntentEvent | None:
+    def step(self, prob: float, timestamp_s: float) -> IntentEvent | None:
         """Feed one window probability; return IntentEvent if the switch fires, else None."""
-        raise NotImplementedError("Milestone 6")
+        if timestamp_s - self._last_fire_s < self.refractory_s:
+            self._consec = 0
+            return None
+
+        if prob > self.tau:
+            self._consec += 1
+        else:
+            self._consec = 0
+
+        if self._consec >= self.debounce_k:
+            self._consec = 0
+            self._last_fire_s = timestamp_s
+            return IntentEvent(timestamp_s=timestamp_s, confidence=prob)
+
+        return None
 
     @classmethod
     def calibrate_threshold(
@@ -50,5 +70,10 @@ class IntentSwitch:
         probs_idle: list[float],
         target_fpr: float = 0.01,
     ) -> float:
-        """Find τ such that FPR on idle windows ≈ target_fpr. Used on validation data."""
-        raise NotImplementedError("Milestone 6")
+        """Find τ such that FPR on idle windows ≈ target_fpr.
+
+        Uses the (1 - target_fpr) quantile of idle probabilities so that
+        at most target_fpr fraction of idle windows exceed τ.
+        """
+        arr = np.asarray(probs_idle, dtype=np.float32)
+        return float(np.quantile(arr, 1.0 - target_fpr))
