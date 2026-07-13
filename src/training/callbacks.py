@@ -1,12 +1,33 @@
 """Training callbacks — early stopping, checkpointing, LR monitor."""
 from __future__ import annotations
 
+import pickle
+from pathlib import Path
+
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import (
     EarlyStopping,
     LearningRateMonitor,
     ModelCheckpoint,
 )
+
+
+class PreprocessorCheckpoint(pl.Callback):
+    """Saves the fitted Preprocessor to <log_dir>/preprocessor.pkl on fit start.
+
+    Stored alongside the Lightning version directory so evaluate.py can load
+    the exact scaler that was fit on training data for each fold.
+    """
+
+    def __init__(self, preprocessor) -> None:
+        self._preprocessor = preprocessor
+
+    def on_train_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        save_path = Path(trainer.log_dir) / "preprocessor.pkl"
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(save_path, "wb") as f:
+            pickle.dump(self._preprocessor, f)
+        pl_module.print(f"Preprocessor saved → {save_path}")
 
 
 def build_callbacks(cfg) -> list[pl.Callback]:

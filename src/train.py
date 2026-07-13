@@ -23,7 +23,7 @@ def main(cfg: DictConfig) -> None:
     from src.datasets.registry import get_dataset
     from src.datasets.splits import GroupKFoldSplitter
     from src.models.backbone import BackboneEncoder, DecoderHead, EEGDecoder
-    from src.training.callbacks import build_callbacks
+    from src.training.callbacks import PreprocessorCheckpoint, build_callbacks
     from src.training.datamodule import EEGDataModule, build_spec_from_cfg
     from src.training.lit_module import LitEEG
     from src.utils.seed import seed_everything
@@ -90,9 +90,11 @@ def main(cfg: DictConfig) -> None:
         max_epochs = int(cfg.training.get("max_epochs", 200))
         precision = "32"  # bf16-mixed requires hardware support; safe default
 
+        callbacks = build_callbacks(cfg) + [PreprocessorCheckpoint(dm.preprocessor)]
+
         trainer = pl.Trainer(
             max_epochs=max_epochs,
-            callbacks=build_callbacks(cfg),
+            callbacks=callbacks,
             enable_progress_bar=True,
             log_every_n_steps=1,
             deterministic=True,
