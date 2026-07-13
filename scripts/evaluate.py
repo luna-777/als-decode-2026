@@ -30,9 +30,11 @@ def _find_best_checkpoints(log_dir: str) -> list[Path]:
     ckpts = sorted(glob.glob(pattern))
     if not ckpts:
         raise FileNotFoundError(f"No best checkpoints found under {log_dir}")
-    # Skip the 3-epoch smoke run (version_0 has val AUC ~0.49)
-    ckpts = [c for c in ckpts if "0.49" not in c]
-    return [Path(c) for c in ckpts]
+    # Keep only checkpoints that have a sibling preprocessor.pkl (new-style runs).
+    # Fall back to all non-smoke checkpoints if none have preprocessors yet.
+    with_pp = [c for c in ckpts if (Path(c).parents[2] / "preprocessor.pkl").exists()]
+    result = with_pp if with_pp else [c for c in ckpts if "0.49" not in c]
+    return [Path(c) for c in result]
 
 
 def _load_model(ckpt_path: Path) -> torch.nn.Module:
@@ -122,7 +124,9 @@ def evaluate(
 
         # Load the preprocessor that was fit on training data for this fold.
         # PreprocessorCheckpoint saves it to <log_dir>/preprocessor.pkl.
-        pp_path = ckpt.parent.parent / "preprocessor.pkl"
+        # ckpt lives at version_N/checkpoints/best-epoch=X/roc_auc=Y.ckpt
+        # preprocessor.pkl is saved at version_N/ (trainer.log_dir)
+        pp_path = ckpt.parents[2] / "preprocessor.pkl"
         if pp_path.exists():
             with open(pp_path, "rb") as f:
                 pp = pickle.load(f)
