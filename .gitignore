@@ -36,3 +36,6 @@ results/
 # Secrets
 .env
 .env.local
+
+# lighting logs 
+lightning_logs/
