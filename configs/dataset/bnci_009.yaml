@@ -1,0 +1,22 @@
+moabb_name: BNCI2014_009
+paradigm: p300
+sfreq_target: 128.0    # native rate; no resampling needed
+
+# No problematic subjects for BNCI2014_009 (10 healthy subjects, all sessions clean)
+exclude_subjects: []
+
+# All 8 parieto-occipital channels (the full dataset electrode set)
+channel_config: default
+channels:
+  default:
+    - Fz
+    - Cz
+    - Pz
+    - Oz
+    - P3
+    - P4
+    - PO7
+    - PO8
+
+epoch_window: [0.0, 0.8]    # standard P300 analysis window (0–800 ms post-stimulus)
+band: [1.0, 24.0]           # standard P300 bandpass — captures P300 component (~300 ms)
