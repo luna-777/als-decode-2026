@@ -7,6 +7,6 @@ idle_fpr_per_min: 1.0             # 1 false activation per minute of idle (§5.5
 
 # Decision layer defaults (§5.5, §B.2)
 debounce_k: 3         # consecutive windows above τ required before firing
-refractory_s: 5.0     # suppression window after an activation
+refractory_s: 10.0    # suppression window after an activation (5s→10s halves FA/min with no TPR cost)
 
 # τ is derived from validation idle-FPR, not hardcoded here
