@@ -1,0 +1,15 @@
+defaults:
+  - stage: stage2
+  - dataset: bnci_009
+  - preprocessing: p300_1_24
+  - model: eegnet
+  - training: stage2
+  - evaluation: p300_loso
+  - _self_
+
+seed: 42
+output_dir: results/stage2/
+fold: 0
+
+# Run: python -m src.train --config-name config_stage2
+# Run fold N: python -m src.train --config-name config_stage2 fold=N
