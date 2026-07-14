@@ -1,6 +1,6 @@
-"""MoabbDatasetWrapper — sole data-access class. §8.3.
+"""MoabbDatasetWrapper and BnciP300Wrapper — sole data-access classes. §8.3.
 
-Never parse raw .edf/.mat files directly; all access goes through this class via MOABB.
+Never parse raw .edf/.mat files directly; all access goes through these classes via MOABB.
 Responsible for channel selection, subject exclusion, and binary epoch labelling.
 """
 from __future__ import annotations
@@ -174,3 +174,82 @@ def _epoch_baseline_run(
         all_X.append(data[:, i * n_times : (i + 1) * n_times])
         all_y.append(0)  # idle
         all_subj.append(subj)
+
+
+# ---------------------------------------------------------------------------
+# Stage 2 — BNCI2014_009 P300 wrapper
+# ---------------------------------------------------------------------------
+
+# Native channel order for BNCI2014_009 (all 8 electrodes, dataset-defined order).
+# Documented in the BNCI Horizon 2020 dataset paper; MOABB returns them in this order.
+_BNCI009_CHANNELS: list[str] = ["Fz", "Cz", "Pz", "Oz", "P3", "P4", "PO7", "PO8"]
+
+
+class BnciP300Wrapper:
+    """Wraps BNCI2014_009 via MOABB's P300 paradigm; returns binary epoch arrays.
+
+    Labels: 1 = Target, 0 = NonTarget.
+    All bandpass filtering and epoching are delegated to MOABB/MNE's P300 paradigm.
+    """
+
+    def __init__(self, spec: "DatasetSpec") -> None:
+        from moabb.datasets import BNCI2014_009
+
+        self.spec = spec
+        self._moabb_ds = BNCI2014_009()
+        self._subject_list: list[int] = [
+            s for s in self._moabb_ds.subject_list if s not in spec.exclude_subjects
+        ]
+
+    @property
+    def subject_list(self) -> list[int]:
+        """All valid subject IDs after applying exclude_subjects."""
+        return list(self._subject_list)
+
+    def load_epochs(self, subjects: list[int]) -> tuple[np.ndarray, np.ndarray, dict]:
+        """Load P300 target/non-target epochs for *subjects*.
+
+        Returns
+        -------
+        X : (N, C, T) float32 — epochs × channels × time-points
+        y : (N,) int64 — 1 = Target, 0 = NonTarget
+        metadata : dict with keys 'subjects', 'channels', 'sfreq', 'n_times'
+        """
+        from moabb.paradigms import P300
+
+        fmin, fmax = float(self.spec.band[0]), float(self.spec.band[1])
+        tmin = float(self.spec.epoch_window[0])
+        # tmax adjusted by -1/sfreq so MNE yields exactly
+        # round(window_len * sfreq) samples — same formula as train.py's n_times.
+        tmax = float(self.spec.epoch_window[1]) - 1.0 / self.spec.sfreq_target
+
+        paradigm = P300(
+            fmin=fmin,
+            fmax=fmax,
+            tmin=tmin,
+            tmax=tmax,
+            resample=self.spec.sfreq_target,
+        )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            X, y_str, meta_df = paradigm.get_data(
+                dataset=self._moabb_ds,
+                subjects=list(subjects),
+            )
+
+        # X: (n_epochs, n_channels, n_times) with channels in _BNCI009_CHANNELS order.
+        # Select and reorder to match spec.channels.
+        ch_to_idx = {ch: i for i, ch in enumerate(_BNCI009_CHANNELS)}
+        ch_idx = [ch_to_idx[ch] for ch in self.spec.channels]
+        X = X[:, ch_idx, :]
+
+        y = (y_str == "Target").astype(np.int64)
+
+        meta: dict = {
+            "subjects": list(meta_df["subject"].values),
+            "channels": list(self.spec.channels),
+            "sfreq": self.spec.sfreq_target,
+            "n_times": X.shape[-1],
+        }
+        return X.astype(np.float32), y, meta
