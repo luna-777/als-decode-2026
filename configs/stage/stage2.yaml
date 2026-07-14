@@ -1,0 +1,9 @@
+stage: 2
+task: p300_target_detection
+
+# Binary classification: target stimulus vs non-target stimulus
+positive_class: target
+negative_class: non_target
+
+# P300 is task-paced (not self-paced); streaming evaluation not applicable
+self_paced: false
