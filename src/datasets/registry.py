@@ -2,17 +2,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
-
-if TYPE_CHECKING:
-    from src.datasets.wrapper import MoabbDatasetWrapper
+from typing import Literal
 
 
 @dataclass
 class DatasetSpec:
     """Immutable descriptor for a single dataset configuration.
 
-    Consumed by MoabbDatasetWrapper and EEGDataModule.
+    Consumed by MoabbDatasetWrapper / BnciP300Wrapper and EEGDataModule.
     All fields correspond to config keys in configs/dataset/*.yaml.
     """
 
@@ -25,8 +22,14 @@ class DatasetSpec:
     epoch_window: tuple[float, float] = (0.0, 2.0)
 
 
-def get_dataset(spec: DatasetSpec) -> MoabbDatasetWrapper:
-    """Instantiate and return a MoabbDatasetWrapper for *spec*."""
-    from src.datasets.wrapper import MoabbDatasetWrapper  # avoid circular at import time
+def get_dataset(spec: DatasetSpec):
+    """Instantiate and return the appropriate wrapper for *spec*.
 
+    paradigm='mi'   → MoabbDatasetWrapper  (Stage 1 / PhysionetMI)
+    paradigm='p300' → BnciP300Wrapper      (Stage 2 / BNCI2014_009)
+    """
+    if spec.paradigm == "p300":
+        from src.datasets.wrapper import BnciP300Wrapper
+        return BnciP300Wrapper(spec)
+    from src.datasets.wrapper import MoabbDatasetWrapper
     return MoabbDatasetWrapper(spec)
