@@ -1,0 +1,25 @@
+# P300 preprocessing recipe (BNCI2014_009 / Stage 2)
+# Bandpass and epoching are handled by MOABB's P300 paradigm;
+# these values are passed through to Preprocessor for robust scaling only.
+
+bandpass:
+  low: 1.0
+  high: 24.0
+  method: fir
+  phase: zero
+  fir_window: hamming
+
+keep_sfreq: 128.0
+
+# P300 data is already stimulus-locked — sliding window stride = epoch length (no overlap)
+window_len_s: 0.8
+window_stride_s: 0.8
+
+# Robust per-channel scaling [fit-on-train] (§C.1 step 4)
+robust_scale: true
+
+# P300 amplitudes are smaller; tighten rejection relative to MI default (150 µV)
+amplitude_reject_uv: 100.0
+
+# Euclidean Alignment off by default
+euclidean_alignment: false
