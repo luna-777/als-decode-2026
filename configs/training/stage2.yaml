@@ -1,0 +1,21 @@
+# Stage 2 P300 optimization defaults
+# Lower LR than Stage 1 — P300 dataset is much smaller (10 subjects)
+optimizer: adamw
+lr: 5.0e-4
+weight_decay: 1.0e-2
+scheduler: cosine
+warmup_epochs: 10
+
+batch_size: 64
+max_epochs: 200
+
+early_stop:
+  monitor: val/roc_auc
+  patience: 20
+  mode: max
+  min_delta: 0.001
+
+loss: weighted_bce
+focal_gamma: 2.0
+
+mixed_precision: true
