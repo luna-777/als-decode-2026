@@ -1,0 +1,10 @@
+# Stage 2 evaluation: LOSO cross-validation over 10 BNCI2014_009 subjects
+protocol: loso
+
+# Hold out 2 subjects as the never-seen final test set
+held_out_n_subjects: 2
+
+# 4-fold GroupKFold over the 8 remaining dev subjects
+n_splits: 4
+
+max_subjects: null
