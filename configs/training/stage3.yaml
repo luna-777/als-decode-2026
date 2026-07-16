@@ -1,0 +1,22 @@
+# Stage 3 — head-only adaptation hyperparameters
+# Only the linear decoder head is trained; backbone is frozen.
+# Higher LR than Stage 1/2 because we're training one linear layer with few samples.
+optimizer: adamw
+lr: 1.0e-2
+weight_decay: 1.0e-3
+scheduler: cosine
+warmup_epochs: 0       # no warmup — calibration sets are tiny
+
+batch_size: 32
+max_epochs: 100
+
+early_stop:
+  monitor: val/roc_auc
+  patience: 10
+  mode: max
+  min_delta: 0.001
+
+loss: weighted_bce
+focal_gamma: 2.0
+
+mixed_precision: false

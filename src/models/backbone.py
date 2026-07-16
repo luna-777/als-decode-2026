@@ -151,6 +151,15 @@ class EEGDecoder(nn.Module):
         self.stage = stage
         if stage == "stage3_adapted":
             backbone.freeze()
+            backbone.eval()   # keep BN in eval mode; prevents running-stat drift on small batches
+
+    def train(self, mode: bool = True) -> "EEGDecoder":
+        super().train(mode)
+        if self.stage == "stage3_adapted":
+            # Backbone must stay in eval regardless of the module-level mode so that
+            # BatchNorm uses population statistics and running stats stay frozen.
+            self.backbone.eval()
+        return self
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.head(self.backbone(x))
