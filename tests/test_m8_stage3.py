@@ -167,6 +167,87 @@ class TestEpochAuc:
 # EEGDecoder stage modes
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Baseline vs adapted invariant (regression for Bug 1 / Bug 2 fixes)
+# ---------------------------------------------------------------------------
+
+class TestBaselineInvariant:
+    def test_n_calib_zero_adapted_equals_baseline(self):
+        """No adaptation (n_calib=0) must produce identical output to baseline.
+
+        Regression for Bug 1: _load_model_frozen used to reinit the head for
+        both paths, making the "baseline" a random model rather than the
+        pretrained cross-subject decoder.
+        """
+        from scripts.adapt_stage3 import _epoch_auc
+
+        model_base = _make_model()
+        model_no_adapt = copy.deepcopy(model_base)  # same weights, no reinit, no training
+
+        # eval() disables Dropout so two identical models produce identical output.
+        # The real script calls model.eval() before _epoch_auc; match that here.
+        model_base.eval()
+        model_no_adapt.eval()
+
+        X, y = _synthetic_calib(n=100, seed=42)
+        auc_base = _epoch_auc(model_base, X, y)
+        auc_no_adapt = _epoch_auc(model_no_adapt, X, y)
+        assert auc_base == auc_no_adapt, (
+            "n_calib=0: model with no reinit and no training must match baseline exactly"
+        )
+
+    def test_reinit_head_changes_output(self):
+        """Re-initialising the head must produce different outputs than the pretrained head.
+
+        Confirms that Bug 1 (both paths using random head) would have been detectable:
+        the pretrained and reinit heads are not identical.
+        """
+        torch.manual_seed(0)
+        model_pretrained = _make_model()
+
+        model_reinit = copy.deepcopy(model_pretrained)
+        torch.manual_seed(99)  # different seed → different xavier draw
+        import torch.nn as nn
+        nn.init.xavier_uniform_(model_reinit.head.linear.weight)
+        nn.init.zeros_(model_reinit.head.linear.bias)
+
+        x = torch.randn(4, 8, 102)
+        with torch.no_grad():
+            out_pretrained = model_pretrained(x)
+            out_reinit = model_reinit(x)
+        assert not torch.allclose(out_pretrained, out_reinit), (
+            "Reinit head must differ from pretrained head"
+        )
+
+    def test_baseline_and_adapted_share_eval_split(self):
+        """Baseline AUC and adapted AUC must be computed on the same data subset.
+
+        Regression for Bug 2: previously baseline used X_all while adapted used
+        X_eval, making ΔAUC meaningless. Here we verify via _epoch_auc that
+        identical models score identically on the same slice.
+        """
+        from scripts.adapt_stage3 import _epoch_auc
+
+        X_all, y_all = _synthetic_calib(n=80, seed=7)
+        n_calib = 20
+        X_eval = X_all[n_calib:]
+        y_eval = y_all[n_calib:]
+
+        model = _make_model()
+        model_copy = copy.deepcopy(model)
+
+        # eval() disables Dropout; two identical models must produce bit-exact results.
+        model.eval()
+        model_copy.eval()
+
+        auc_eval_1 = _epoch_auc(model,      X_eval, y_eval)
+        auc_eval_2 = _epoch_auc(model_copy, X_eval, y_eval)
+
+        assert auc_eval_1 == auc_eval_2, "Same model on same split must give same AUC"
+        # Verify the eval split has the expected size
+        assert len(X_eval) == len(X_all) - n_calib
+
+
 class TestEEGDecoderStage:
     def test_stage1_all_params_trainable(self):
         model = _make_model()

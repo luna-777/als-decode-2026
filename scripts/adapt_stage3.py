@@ -81,8 +81,12 @@ def _find_best_checkpoint(log_dir: str, paradigm: str) -> Path:
 # Model loading + head reset
 # ---------------------------------------------------------------------------
 
-def _load_model_frozen(ckpt_path: Path, paradigm: str) -> nn.Module:
-    """Load checkpoint, freeze backbone, re-initialise head. Returns EEGDecoder."""
+def _load_model_frozen(ckpt_path: Path, paradigm: str, reinit_head: bool = True) -> nn.Module:
+    """Load checkpoint, freeze backbone. Re-initialises head only when reinit_head=True.
+
+    reinit_head=False → pretrained head intact (use for the zero-shot baseline).
+    reinit_head=True  → fresh head ready for patient-specific calibration.
+    """
     from src.models.backbone import BackboneEncoder, DecoderHead, EEGDecoder
     from src.training.lit_module import LitEEG
 
@@ -109,9 +113,9 @@ def _load_model_frozen(ckpt_path: Path, paradigm: str) -> nn.Module:
         copy.deepcopy(lit.model.head),
         stage="stage3_adapted",
     )
-    # Re-initialise head (fresh weights for patient-specific calibration)
-    nn.init.xavier_uniform_(adapted.head.linear.weight)
-    nn.init.zeros_(adapted.head.linear.bias)
+    if reinit_head:
+        nn.init.xavier_uniform_(adapted.head.linear.weight)
+        nn.init.zeros_(adapted.head.linear.bias)
 
     return adapted
 
@@ -180,6 +184,7 @@ def calibration_curve(
     calib_sizes: list[int] | None = None,
     n_adapt_epochs: int = 100,
     adapt_lr: float = 1e-2,
+    seed: int = 42,
 ) -> list[dict]:
     from src.datasets.registry import DatasetSpec, get_dataset
 
@@ -223,19 +228,6 @@ def calibration_curve(
         X_all, y_all, _ = wrapper.load_epochs([subj])
         X_all = pp.transform(X_all)
 
-        # Baseline: cross-subject model, no adaptation
-        model_base = _load_model_frozen(ckpt_path, paradigm)
-        model_base.eval()
-        baseline_auc = _epoch_auc(model_base, X_all, y_all)
-        log.info("  Subject %s baseline AUC = %.3f", subj, baseline_auc)
-
-        results.append({
-            "subject": subj,
-            "calib_size": 0,
-            "auc": baseline_auc,
-            "adapted": False,
-        })
-
         for n_calib in calib_sizes:
             if n_calib >= len(X_all) - 10:
                 log.warning("  Skipping calib_size=%d (too large for subject %s)", n_calib, subj)
@@ -243,30 +235,68 @@ def calibration_curve(
 
             X_calib = X_all[:n_calib]
             y_calib = y_all[:n_calib]
-            X_eval = X_all[n_calib:]
-            y_eval = y_all[n_calib:]
+            X_eval  = X_all[n_calib:]
+            y_eval  = y_all[n_calib:]
 
             if len(np.unique(y_eval)) < 2:
                 log.warning("  Skipping calib_size=%d (eval set has only one class)", n_calib)
                 continue
 
-            # Fresh adapted model for each calib size (independent runs)
-            model_adapted = _load_model_frozen(ckpt_path, paradigm)
+            # Baseline: pretrained head (no re-init) on the same eval split.
+            # Must be computed here, not before the loop, so it shares the eval
+            # denominator with the adapted model.
+            model_base = _load_model_frozen(ckpt_path, paradigm, reinit_head=False)
+            model_base.eval()
+            baseline_auc = _epoch_auc(model_base, X_eval, y_eval)
+
+            # Adapted: fresh head trained on calib, evaluated on the same eval split.
+            model_adapted = _load_model_frozen(ckpt_path, paradigm, reinit_head=True)
             _adapt_head(model_adapted, X_calib, y_calib,
                         n_epochs=n_adapt_epochs, lr=adapt_lr)
-
             adapted_auc = _epoch_auc(model_adapted, X_eval, y_eval)
+
+            delta_auc = adapted_auc - baseline_auc
             log.info(
-                "  Subject %s | calib=%3d | adapted AUC=%.3f (Δ=%.3f)",
-                subj, n_calib, adapted_auc, adapted_auc - baseline_auc,
+                "  Subject %s | calib=%3d | baseline=%.3f | adapted=%.3f (Δ=%+.3f)",
+                subj, n_calib, baseline_auc, adapted_auc, delta_auc,
             )
             results.append({
                 "subject": subj,
                 "calib_size": n_calib,
-                "auc": adapted_auc,
-                "delta_auc": adapted_auc - baseline_auc,
-                "adapted": True,
+                "baseline_auc": baseline_auc,
+                "adapted_auc": adapted_auc,
+                "delta_auc": delta_auc,
+                "seed": seed,
             })
+
+    # Persist results so they can be re-read without re-running
+    import csv
+    out_dir = Path("experiments") / "stage3"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = out_dir / f"{paradigm}_results.csv"
+    fieldnames = ["paradigm", "subject", "calib_size", "baseline_auc", "adapted_auc", "delta_auc", "seed"]
+    with open(csv_path, "w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        for r in results:
+            writer.writerow({"paradigm": paradigm, **r})
+    log.info("Results saved → %s", csv_path)
+
+    try:
+        import os
+        import wandb
+        wandb.init(
+            project=os.environ.get("WANDB_PROJECT", "als-decode"),
+            name=f"stage3_{paradigm}",
+            job_type="stage3_adaptation",
+            mode=os.environ.get("WANDB_MODE", "offline"),
+            config={"paradigm": paradigm, "calib_sizes": calib_sizes, "seed": seed},
+        )
+        for r in results:
+            wandb.log({"paradigm": paradigm, **r})
+        wandb.finish()
+    except ImportError:
+        pass
 
     return results
 
@@ -293,28 +323,29 @@ def main() -> None:
     )
 
     paradigm_label = "MI (Stage 1)" if args.paradigm == "mi" else "P300 (Stage 2)"
-    print(f"\n{'='*62}")
+    print(f"\n{'='*72}")
     print(f"STAGE 3 ADAPTATION — {paradigm_label}")
-    print(f"{'='*62}")
-    print(f"{'Subject':<10} {'Calib N':>8} {'AUC':>8} {'ΔAUC':>8}")
-    print(f"{'-'*62}")
+    print(f"{'='*72}")
+    print(f"{'Subject':<10} {'Calib N':>8} {'Baseline':>10} {'Adapted':>10} {'ΔAUC':>8}")
+    print(f"{'-'*72}")
     for r in results:
-        delta = f"{r.get('delta_auc', 0.0):>+.3f}" if r["adapted"] else "baseline"
-        print(f"{r['subject']:<10} {r['calib_size']:>8} {r['auc']:>8.3f} {delta:>8}")
+        print(
+            f"{r['subject']:<10} {r['calib_size']:>8}"
+            f" {r['baseline_auc']:>10.3f} {r['adapted_auc']:>10.3f}"
+            f" {r['delta_auc']:>+8.3f}"
+        )
 
     # Summary: mean ΔAUC at each calib size
-    adapted = [r for r in results if r["adapted"]]
-    if adapted:
-        import collections
-        by_size: dict[int, list[float]] = collections.defaultdict(list)
-        for r in adapted:
-            by_size[r["calib_size"]].append(r.get("delta_auc", 0.0))
+    import collections
+    by_size: dict[int, list[float]] = collections.defaultdict(list)
+    for r in results:
+        by_size[r["calib_size"]].append(r["delta_auc"])
+    if by_size:
         print(f"\n{'Calib N':>8} {'Mean ΔAUC':>12}")
         print("-" * 22)
         for size in sorted(by_size):
-            mean_d = np.mean(by_size[size])
-            print(f"{size:>8} {mean_d:>+.3f}")
-    print(f"{'='*62}")
+            print(f"{size:>8} {np.mean(by_size[size]):>+.3f}")
+    print(f"{'='*72}")
 
 
 if __name__ == "__main__":
