@@ -84,8 +84,8 @@ def _find_best_checkpoint(log_dir: str, paradigm: str) -> Path:
 def _load_model_frozen(ckpt_path: Path, paradigm: str, reinit_head: bool = True) -> nn.Module:
     """Load checkpoint, freeze backbone. Re-initialises head only when reinit_head=True.
 
-    reinit_head=False → pretrained head intact (use for the zero-shot baseline).
-    reinit_head=True  → fresh head ready for patient-specific calibration.
+    reinit_head=False → pretrained head intact (baseline and warm-start adapted path).
+    reinit_head=True  → fresh random head (cold-start ablation only).
     """
     from src.models.backbone import BackboneEncoder, DecoderHead, EEGDecoder
     from src.training.lit_module import LitEEG
@@ -183,7 +183,7 @@ def calibration_curve(
     log_dir: str = "lightning_logs",
     calib_sizes: list[int] | None = None,
     n_adapt_epochs: int = 100,
-    adapt_lr: float = 1e-2,
+    adapt_lr: float = 1e-3,
     seed: int = 42,
 ) -> list[dict]:
     from src.datasets.registry import DatasetSpec, get_dataset
@@ -196,6 +196,7 @@ def calibration_curve(
             channels=["Fz", "Cz", "Pz", "Oz", "P3", "P4", "PO7", "PO8"],
             sfreq_target=128.0, exclude_subjects=[],
             band=(1.0, 24.0), epoch_window=(0.0, 0.8),
+            euclidean_alignment=True,
         )
     else:
         if calib_sizes is None:
@@ -209,6 +210,7 @@ def calibration_curve(
             ],
             sfreq_target=160.0, exclude_subjects=[88, 92, 100],
             band=(8.0, 30.0), epoch_window=(0.0, 2.0),
+            euclidean_alignment=True,
         )
 
     wrapper = get_dataset(spec)
@@ -249,8 +251,10 @@ def calibration_curve(
             model_base.eval()
             baseline_auc = _epoch_auc(model_base, X_eval, y_eval)
 
-            # Adapted: fresh head trained on calib, evaluated on the same eval split.
-            model_adapted = _load_model_frozen(ckpt_path, paradigm, reinit_head=True)
+            # Adapted: pretrained head fine-tuned on calib (warm-start), evaluated
+            # on the same eval split. Keeping pretrained weights avoids having to
+            # relearn the linear map from a handful of calibration samples.
+            model_adapted = _load_model_frozen(ckpt_path, paradigm, reinit_head=False)
             _adapt_head(model_adapted, X_calib, y_calib,
                         n_epochs=n_adapt_epochs, lr=adapt_lr)
             adapted_auc = _epoch_auc(model_adapted, X_eval, y_eval)
@@ -311,7 +315,7 @@ def main() -> None:
     parser.add_argument("--log-dir", default="lightning_logs")
     parser.add_argument("--calib-sizes", nargs="+", type=int, default=None)
     parser.add_argument("--adapt-epochs", type=int, default=100)
-    parser.add_argument("--adapt-lr", type=float, default=1e-2)
+    parser.add_argument("--adapt-lr", type=float, default=1e-3)
     args = parser.parse_args()
 
     results = calibration_curve(

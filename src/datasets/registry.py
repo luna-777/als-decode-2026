@@ -20,6 +20,7 @@ class DatasetSpec:
     exclude_subjects: list[int] = field(default_factory=list)
     band: tuple[float, float] = (8.0, 30.0)
     epoch_window: tuple[float, float] = (0.0, 2.0)
+    euclidean_alignment: bool = False
 
 
 def get_dataset(spec: DatasetSpec):

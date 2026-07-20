@@ -94,6 +94,15 @@ class MoabbDatasetWrapper:
 
         X = np.stack(all_X, axis=0).astype(np.float32)
         y = np.array(all_y, dtype=np.int64)
+
+        if self.spec.euclidean_alignment:
+            from src.preprocessing.alignment import EuclideanAligner
+            subj_arr = np.array(all_subj)
+            for sid in np.unique(subj_arr):
+                mask = subj_arr == sid
+                X[mask] = EuclideanAligner().fit_transform(X[mask])
+            log.info("Euclidean Alignment applied per subject (%d subjects)", len(np.unique(subj_arr)))
+
         meta: dict = {
             "subjects": all_subj,
             "channels": ch_names,
@@ -245,6 +254,15 @@ class BnciP300Wrapper:
         X = X[:, ch_idx, :]
 
         y = (y_str == "Target").astype(np.int64)
+        X = X.astype(np.float32)
+
+        if self.spec.euclidean_alignment:
+            from src.preprocessing.alignment import EuclideanAligner
+            subj_arr = meta_df["subject"].values
+            for sid in np.unique(subj_arr):
+                mask = subj_arr == sid
+                X[mask] = EuclideanAligner().fit_transform(X[mask])
+            log.info("Euclidean Alignment applied per subject (%d subjects)", len(np.unique(subj_arr)))
 
         meta: dict = {
             "subjects": list(meta_df["subject"].values),
@@ -252,4 +270,4 @@ class BnciP300Wrapper:
             "sfreq": self.spec.sfreq_target,
             "n_times": X.shape[-1],
         }
-        return X.astype(np.float32), y, meta
+        return X, y, meta

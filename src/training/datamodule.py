@@ -175,4 +175,5 @@ def build_spec_from_cfg(cfg_dataset):
             float(cfg_dataset.epoch_window[0]),
             float(cfg_dataset.epoch_window[1]),
         ),
+        euclidean_alignment=bool(cfg_dataset.get("euclidean_alignment", False)),
     )

@@ -30,3 +30,4 @@ channels:
 
 epoch_window: [0.0, 2.0]     # §5.2 — 2 s sliding window
 band: [8.0, 30.0]            # mu + beta
+euclidean_alignment: true    # per-subject covariance whitening (He et al. 2020)

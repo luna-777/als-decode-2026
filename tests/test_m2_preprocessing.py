@@ -203,12 +203,15 @@ class TestPreprocessor:
         out2 = pp2.fit_transform(synthetic_X)
         np.testing.assert_array_equal(out1, out2)
 
-    def test_ea_raises_when_enabled(self, synthetic_X):
-        """Euclidean Alignment is not implemented for Stage 1 and must raise."""
+    def test_ea_flag_does_not_raise(self, synthetic_X):
+        """euclidean_alignment flag in Preprocessor config is accepted without error.
+
+        EA is handled at the wrapper level (load_epochs); the Preprocessor itself
+        is agnostic to it and must not raise when the flag is set.
+        """
         from src.preprocessing.pipeline import Preprocessor
         pp = Preprocessor(cfg={"euclidean_alignment": True})
-        with pytest.raises(NotImplementedError, match="Euclidean"):
-            pp.fit(synthetic_X)
+        pp.fit(synthetic_X)  # must not raise
 
     def test_no_scale_cfg(self, synthetic_X):
         """With robust_scale=False the scaler should not be created."""

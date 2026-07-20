@@ -64,11 +64,8 @@ class Preprocessor:
             self._scaler = RobustChannelScaler()
             self._scaler.fit(X)
 
-        if self._get("euclidean_alignment", False):
-            raise NotImplementedError(
-                "Euclidean Alignment is not used in Stage 1 (mi_8_30). "
-                "Set euclidean_alignment: false in your preprocessing config."
-            )
+        # Euclidean Alignment is applied per-subject inside load_epochs(),
+        # before the Preprocessor sees any data. Nothing to fit here.
 
         self._fitted = True
         return self

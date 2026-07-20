@@ -20,3 +20,4 @@ channels:
 
 epoch_window: [0.0, 0.8]    # standard P300 analysis window (0–800 ms post-stimulus)
 band: [1.0, 24.0]           # standard P300 bandpass — captures P300 component (~300 ms)
+euclidean_alignment: true   # per-subject covariance whitening (He et al. 2020)
