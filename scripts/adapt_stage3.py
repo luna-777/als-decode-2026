@@ -235,10 +235,10 @@ def calibration_curve(
                 log.warning("  Skipping calib_size=%d (too large for subject %s)", n_calib, subj)
                 continue
 
-            X_calib = X_all[:n_calib]
-            y_calib = y_all[:n_calib]
-            X_eval  = X_all[n_calib:]
-            y_eval  = y_all[n_calib:]
+            from sklearn.model_selection import train_test_split
+            X_calib, X_eval, y_calib, y_eval = train_test_split(
+                X_all, y_all, train_size=n_calib, random_state=seed, stratify=y_all
+            )
 
             if len(np.unique(y_eval)) < 2:
                 log.warning("  Skipping calib_size=%d (eval set has only one class)", n_calib)
