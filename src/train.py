@@ -43,8 +43,13 @@ def main(cfg: DictConfig) -> None:
 
     # ------------------------------------------------------------------ splits
     held_out_n = int(cfg.evaluation.get("held_out_n_subjects", 10))
-    test_subjects = all_subjects[-held_out_n:]
-    dev_subjects = all_subjects[:-held_out_n]
+    if held_out_n == 0:
+        # Full LOSO: all subjects participate in cross-validation, no final holdout.
+        test_subjects = []
+        dev_subjects = all_subjects
+    else:
+        test_subjects = all_subjects[-held_out_n:]
+        dev_subjects = all_subjects[:-held_out_n]
 
     n_splits = int(cfg.evaluation.get("n_splits", 5))
     splitter = GroupKFoldSplitter(n_splits=n_splits)
@@ -102,6 +107,14 @@ def main(cfg: DictConfig) -> None:
         )
 
         trainer.fit(lit, dm)
+
+        # Record which subjects were held out as validation so Stage 3 can
+        # find the right fold checkpoint for each test subject.
+        import json
+        from pathlib import Path as _Path
+        _log_dir = _Path(trainer.logger.log_dir)
+        _log_dir.mkdir(parents=True, exist_ok=True)
+        (_log_dir / "val_subjects.json").write_text(json.dumps(val_subjs))
 
         if test_subjects:
             trainer.test(lit, dm, ckpt_path="best")

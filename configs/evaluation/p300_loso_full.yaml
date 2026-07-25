@@ -1,0 +1,7 @@
+# Stage 2 LOSO-10 evaluation: leave one of the 10 BNCI2014_009 subjects out per fold.
+# Run all 10 folds (fold=0 … fold=9) to get a checkpoint for every subject.
+# Stage 3 adapt_stage3.py picks the right fold checkpoint per test subject.
+protocol: loso
+held_out_n_subjects: 0   # 0 = all subjects in dev; no final holdout
+n_splits: 10             # GroupKFold(10) over 10 subjects == leave-one-out
+max_subjects: null

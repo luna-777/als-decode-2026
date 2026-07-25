@@ -77,6 +77,53 @@ def _find_best_checkpoint(log_dir: str, paradigm: str) -> Path:
     return Path(best)
 
 
+def _find_checkpoint_for_subject(log_dir: str, paradigm: str, subject: int) -> Path:
+    """LOSO lookup: find the checkpoint trained without *subject* in the val fold.
+
+    Requires val_subjects.json written by train.py beside each version's
+    preprocessor.pkl. Falls back to _find_best_checkpoint if no metadata exists
+    (e.g. old checkpoints trained before this feature was added).
+    """
+    import json
+
+    target_ch = 8 if paradigm == "p300" else 17
+    meta_pattern = str(Path(log_dir) / "version_*" / "val_subjects.json")
+    meta_files = sorted(glob.glob(meta_pattern))
+
+    if not meta_files:
+        log.warning(
+            "No val_subjects.json found in %s — falling back to best checkpoint. "
+            "Re-train with the p300_loso_full evaluation config for proper LOSO.",
+            log_dir,
+        )
+        return _find_best_checkpoint(log_dir, paradigm)
+
+    for meta_path in meta_files:
+        val_subjs = json.loads(Path(meta_path).read_text())
+        if subject not in val_subjs:
+            continue
+        version_dir = Path(meta_path).parent
+        ckpt_candidates = [
+            c for c in version_dir.glob("checkpoints/best-epoch=*/*.ckpt")
+            if _n_channels_from_ckpt(str(c)) == target_ch
+            and (version_dir / "preprocessor.pkl").exists()
+        ]
+        if not ckpt_candidates:
+            continue
+        best = max(ckpt_candidates, key=lambda p: _val_auc_from_path(str(p)))
+        log.info(
+            "Subject %s: using checkpoint %s (val AUC=%.4f)",
+            subject, best, _val_auc_from_path(str(best)),
+        )
+        return best
+
+    raise FileNotFoundError(
+        f"No checkpoint found where subject {subject} was the val fold in {log_dir}. "
+        f"Run: python -m src.train dataset=bnci_009 stage=stage2 "
+        f"evaluation=p300_loso_full fold=<0-9>"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Model loading + head reset
 # ---------------------------------------------------------------------------
@@ -214,19 +261,30 @@ def calibration_curve(
         )
 
     wrapper = get_dataset(spec)
-    test_subjects = wrapper.subject_list[-2:] if paradigm == "p300" else wrapper.subject_list[-10:]
+    test_subjects = wrapper.subject_list[-10:]
     log.info("Test subjects for Stage 3: %s", test_subjects)
 
-    ckpt_path = _find_best_checkpoint(log_dir, paradigm)
-    pp_path = ckpt_path.parents[2] / "preprocessor.pkl"
-    with open(pp_path, "rb") as f:
-        pp = pickle.load(f)
-    log.info("Preprocessor loaded from %s", pp_path)
+    # For MI, one best checkpoint covers all test subjects (they were never in training).
+    # For P300 LOSO-10, each subject needs the fold checkpoint that held them out.
+    _mi_ckpt = None
+    if paradigm != "p300":
+        _mi_ckpt = _find_best_checkpoint(log_dir, paradigm)
 
     results: list[dict] = []
 
     for subj in test_subjects:
         log.info("Subject %s — loading epochs…", subj)
+
+        if paradigm == "p300":
+            ckpt_path = _find_checkpoint_for_subject(log_dir, paradigm, subj)
+        else:
+            ckpt_path = _mi_ckpt
+
+        pp_path = ckpt_path.parents[2] / "preprocessor.pkl"
+        with open(pp_path, "rb") as f:
+            pp = pickle.load(f)
+        log.info("Preprocessor: %s", pp_path)
+
         X_all, y_all, _ = wrapper.load_epochs([subj])
         X_all = pp.transform(X_all)
 
