@@ -230,3 +230,119 @@ seeds as independent samples would inflate n by the seed count.
 
 **Rejected:** Reporting one-sided p as the headline — the direction of the effect
 was not pre-registered, and a one-sided test is not justified post hoc.
+
+---
+
+## ADR-18 — Chronological order is recorded, never inferred from array position
+
+**Decision:** Both wrappers return per-epoch `source`, `run`, and `order`.
+`order` is computed by `chronological_order()` from (EDF run number, position
+within run), per subject. Array position is never treated as time.
+
+**Rationale:** The array is not in acquisition order, in two independent ways.
+Baseline runs 1–2 are appended last but were recorded first. And MOABB does not key
+the task runs chronologically — `PhysionetMI._get_single_subject_data` emits hand
+runs [4, 8, 12] as keys `'0','1','2'` and feet runs [6, 10, 14] as `'3','4','5'`,
+so even within the task block the array interleaves 4, 8, 12, 6, 10, 14. Any
+"temporal" split that used array position would be measuring neither acquisition
+order nor anything else meaningful. `_MOABB_KEY_TO_EDF_RUN` pins the mapping.
+
+**Rejected:** Sorting the array into chronological order at load time — it would
+silently change what `temporal_array` reproduces, and the historical array order is
+itself an experimental arm.
+
+---
+
+## ADR-19 — `stratified_task_only` holds the evaluation set fixed
+
+**Decision:** The task-only arm restricts only the calibration *draw* to
+`source == "task"`. Its evaluation set is everything not drawn, baseline epochs
+included, so it has the same evaluation denominator as `stratified`.
+
+**Rationale:** The arm exists to separate two confounded explanations of the
+stratified advantage: coverage of the baseline-idle sub-population versus temporal
+spread within task runs. If the arm also shrank the evaluation set to task epochs,
+any difference from `stratified` could be attributed to the changed evaluation
+denominator and the arm would answer nothing. Holding evaluation fixed makes
+calibration coverage the only difference.
+
+**Rejected:** Restricting both sides — reads more "consistent" and destroys the
+contrast the arm was built for.
+
+---
+
+## ADR-20 — EA reference scope is an explicit argument, not a property of loading
+
+**Decision:** `load_epochs` no longer applies Euclidean Alignment on the Stage 3
+path; the runner forces `spec.euclidean_alignment=False` and applies the reference
+itself via `--ea-ref {session,calibration}`. `session` fits over all of a subject's
+epochs (reproducing the previous in-wrapper behaviour exactly); `calibration` fits
+on the calibration epochs only.
+
+**Rationale:** Fitting EA over the whole session including evaluation epochs is
+transductive. It is label-free, so it is not label leakage, but it contradicts
+design.md §11.1 and §7.3 and is not achievable at deployment, where the evaluation
+epochs have not happened yet. Making the scope an argument turns a hidden
+assumption into a measured quantity. `session` remains the default so prior results
+stay comparable. Training still applies EA inside the wrapper, which is correct —
+a cross-subject model legitimately sees each training subject's whole session.
+
+**Rejected:** Switching the default to `calibration` — it would silently change
+every number relative to the archived runs, and the gap between the two scopes is
+itself a result worth reporting.
+
+---
+
+## ADR-21 — Head adaptation trains on cached frozen-backbone features
+
+**Decision:** Under `--ea-ref session`, backbone features are computed once per
+(subject, fold) and every head adaptation trains on the cached vectors.
+`--ea-ref calibration` recomputes features per split.
+
+**Rationale:** `EEGDecoder(stage="stage3_adapted")` freezes the backbone and pins it
+to eval mode, so `backbone(x)` is a deterministic function of `x` alone and
+`forward(x) == head(backbone(x))`. Under session-scoped EA the input is identical
+across every arm, size and seed, so recomputing it is pure waste — the Phase 2 grid
+is 5 arms × 6 sizes × 5 seeds × 5 folds per subject. Under calibration-scoped EA
+the reference depends on the split, so the input genuinely changes and the cache
+would be wrong; that path recomputes. `scripts/verify_feature_cache.py` asserts the
+equivalence on a real condition rather than assuming it, and reports bitwise
+identity.
+
+**Rejected:** Caching for `calibration` too, keyed on the split — correctness
+depending on a cache key is exactly the failure mode this audit exists to remove.
+
+---
+
+## ADR-22 — Degenerate conditions are reported, never skipped
+
+**Decision:** When a condition cannot produce an AUC — empty evaluation set,
+single-class evaluation set, calibration pool too small — the runner emits a row
+with a `status` string and NaN metrics instead of `continue`. `analyze_stage3.py`
+excludes them from statistics and counts them in `n_degenerate`.
+
+**Rationale:** The old code logged a warning and skipped, so the results table had
+gaps with no recorded cause, and a reader could not distinguish "not run", "run and
+failed", and "run and unremarkable". Three MI conditions are structurally
+unmeasurable (docs/AUDIT.md §0.8) and that fact is a finding about the experimental
+design, not an absence of data.
+
+**Rejected:** Emitting AUC 0.5 for degenerate cases — fabricates a measurement.
+
+---
+
+## ADR-23 — LOSO fold lookup is filtered by paradigm
+
+**Decision:** `loso_fold_for_subject` takes `n_channels` and only considers folds
+whose checkpoint has that channel count.
+
+**Rationale:** `lightning_logs/` holds folds from both paradigms, and subject IDs
+overlap — PhysionetMI uses 1–109, BNCI2014_009 uses 1–10. When MI fold 4 was
+trained, its `val_subjects.json` ([2, 7, 12, …]) collided with P300 subjects 2 and
+7. Strict mode raised "ambiguous" rather than silently scoring those subjects
+against a 17-channel MI backbone, which is the failure it was written to catch, but
+the lookup should not have been paradigm-blind in the first place.
+
+**Rejected:** Namespacing subject IDs per paradigm in `val_subjects.json` — would
+require rewriting existing metadata files; filtering on a property already present
+in the checkpoint is sufficient.
