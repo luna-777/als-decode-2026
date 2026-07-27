@@ -424,6 +424,112 @@ is the 8-channel Stage 2 P300 retrain, not the missing MI fold.
 
 ---
 
+## 0.7 — The missing fifth MI fold, retrained
+
+`configs/evaluation/loso.yaml` specifies `n_splits: 5`, but the EA-era sweep
+contained only four MI folds (§0.6.1). Fold identity was recovered by matching
+Hydra run directories to Lightning version directories by start time and channel
+count:
+
+| Hydra run (Jul 19) | `fold` | version | val AUC |
+|---|---|---|---|
+| 18-28-12 | 0 | version_27 | 0.7783 |
+| 18-58-02 | 1 | version_28 | 0.8016 |
+| 19-56-56 | 2 | version_29 | 0.7951 |
+| 20-06-50 | 3 | version_30 | 0.7632 |
+| — | **4** | **missing** | — |
+
+(`version_26`, created 18:28:41, is the 8-channel Stage 2 P300 retrain launched at
+18:28:18 — not the missing MI fold. The MI run launched at 18:28:12 reached logger
+init later because it loads 96 subjects, so it took `version_27`.)
+
+All four Jul 19 MI configs are byte-identical apart from `fold` (md5 of the config
+with the `fold:` line removed: `ac72d7b0…` for all four), and a fresh Hydra
+composition today differs from the Jul 19 fold-1 config *only* in the `fold` value.
+Fold 4 was therefore reproducible exactly and was run as `python -m src.train
+fold=4` → **`version_41`, val AUC 0.7625**.
+
+**Conditions match the other four.** Split sizes are identical to folds 1–3
+(train 77 / val 19 / test 10; fold 0 is 76/20/10 by GroupKFold construction), seed
+42, same dataset/preprocessing/model/training/evaluation configs, `deterministic=True`.
+Its val AUC 0.7625 sits just below the previous range (0.7632–0.8016), extending it
+to 0.7625–0.8016.
+
+**One asymmetry, disclosed:** `version_41` carries a recorded `montage.json`
+(written by the new `MontageCheckpoint`), whereas `version_27..30` predate it and
+will report `montage_source="inferred_from_config"`. This is a difference in
+recorded provenance, not in training conditions — `version_41`'s recorded montage
+is byte-identical to the config list that §0.6 confirmed empirically for
+`version_28`. No Phase 1 code change alters MI training inputs: the provenance
+arrays are metadata computed after `X`/`y` are assembled, and EA is still applied
+inside `load_epochs` on the training path.
+
+---
+
+## 0.8 — Pre-Phase-2 epoch counts and evaluation-set composition
+
+Computed with no model involved (`scripts/report_epoch_composition.py`), seed 42,
+`--purge-k 5`. Full tables in `experiments/audit/`.
+
+### MI (PhysionetMI), 10 held-out subjects
+
+Every subject has **234 epochs** except subject 104 (230): **174 task + 60
+baseline**, 90 positive / 144 negative (38.5% positive), baseline runs 1–2 and task
+runs 4, 6, 8, 10, 12, 14 all present.
+
+> The audit brief estimated "roughly 250 epochs"; the true count is 234. That
+> difference is what makes N=200 marginal rather than merely small.
+
+Evaluation-set composition, mean over subjects:
+
+| arm | N | n_eval | eval baseline% | eval pos% | calib baseline% | status |
+|---|---|---|---|---|---|---|
+| temporal_array | 10 | 223.6 | 26.8% | 37.9% | 0.0% | ok |
+| temporal_array | 100 | 133.6 | 44.9% | 28.3% | 0.0% | ok |
+| **temporal_array** | **200** | **34** | **100%** | **0%** | 0.0% | **degenerate: eval is single-class** |
+| temporal_chrono | 10 | 223.6 | 22.4% | 40.2% | 100.0% | ok |
+| temporal_chrono | 200 | 33.6 | 0.0% | 53.0% | 30.0% | ok |
+| stratified | 200 | 33.6 | 38.1% | 38.1% | 23.6% | ok |
+| **stratified_task_only** | **200** | — | — | — | — | **impossible: pool is 174 task epochs** |
+| purged_stratified | 50 | 17.4 | 58.2% | 18.3% | 22.0% | ok (166 purged) |
+| **purged_stratified** | **100, 200** | **0** | — | — | — | **degenerate: empty eval** |
+
+Three conditions are **structurally unmeasurable**, not merely difficult:
+
+1. **`temporal_array` at N=200.** Array order is 174 task epochs then 60 baseline.
+   The first 200 take all 174 task epochs plus the first 26 baseline epochs,
+   leaving 34 evaluation epochs that are *all* baseline-run idle and therefore all
+   label 0. AUC is undefined on a single-class set. This is a property of the
+   dataset and the arm, not a bug, and no seed or re-run changes it. **The paper's
+   headline temporal-vs-stratified comparison at N=200 cannot exist.**
+2. **`stratified_task_only` at N=200.** The task pool is 174 epochs; 200 cannot be
+   drawn from it.
+3. **`purged_stratified` at N≥100.** With `purge_k=5`, each calibration epoch
+   removes up to 11 chronological neighbours. 100 calibration epochs scattered
+   through a 234-epoch recording purge the entire remainder. Even at N=50 only 17
+   evaluation epochs survive, at 18.3% positive — enough to compute an AUC but too
+   few to interpret. `purged_stratified` is informative for MI only at N=10 and 20.
+
+Note also how sharply the two temporal arms differ in what they load into
+calibration, which is the mechanism contrast the paper rests on: at N=10
+`temporal_array` calibration is 0% baseline and `temporal_chrono` is 100%.
+
+### P300 (BNCI2014_009), all 10 subjects
+
+Every subject has **1728 epochs** (288 target / 1440 non-target, 16.7% positive)
+across 3 sessions of 1 run each. There is **no baseline-run sub-population** —
+every P300 epoch is a flash in a task run, so `stratified_task_only` is by
+construction identical to `stratified` and `calib_baseline_frac` is 0 everywhere.
+All five arms are measurable at all five sizes; `purged_stratified` at N=480 leaves
+60 evaluation epochs.
+
+> Because the task/baseline distinction does not exist for P300, the mechanism
+> question the arms were designed to answer is an **MI-only** question. The P300
+> arms still test temporal spread versus stratification, but they cannot speak to
+> baseline-idle coverage.
+
+---
+
 ## Reproduction commands
 
 ```bash
