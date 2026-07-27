@@ -56,7 +56,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--folds", nargs="+", required=True)
     ap.add_argument("--log-dir", default="lightning_logs")
-    ap.add_argument("--out", default="experiments/stage3/mi_heldout_montage_check.csv")
+    ap.add_argument("--out", default=None)
     ap.add_argument("--strict-montage", action="store_true")
     ap.add_argument(
         "--montage-override", nargs="+", default=None,
@@ -81,6 +81,18 @@ def main() -> None:
         import dataclasses
 
         montage_label = "override"
+        # An overridden montage bypasses the ADR-14 assertion, so its output is not a
+        # result and must never land where the paper's tables are read from.
+        if args.out is None:
+            args.out = "experiments/audit/mi_heldout_montage_override.csv"
+        if Path(args.out).resolve().is_relative_to(
+            (ROOT / "experiments" / "stage3").resolve()
+        ):
+            raise SystemExit(
+                f"--montage-override may not write to experiments/stage3/ "
+                f"(got {args.out}). Output from a bypassed montage assertion is audit "
+                f"evidence, not a result; route it to experiments/audit/."
+            )
         log.warning(
             "AUDIT CONTROL: overriding the montage with %s — the montage assertion "
             "is bypassed. This measures the pre-audit condition, not a result.",
@@ -132,7 +144,7 @@ def main() -> None:
                 "channels": "|".join(spec.channels),
             })
 
-    out = Path(args.out)
+    out = Path(args.out or "experiments/stage3/mi_heldout_montage_check.csv")
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))

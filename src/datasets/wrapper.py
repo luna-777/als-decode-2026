@@ -28,6 +28,15 @@ _ALL_EVENT_ID: dict[str, int] = {
 _CONTROL_IDS: frozenset[int] = frozenset({2, 3, 4, 5})  # imagined movement = positive class
 _BASELINE_RUN_NUMS: tuple[int, int] = (1, 2)  # eyes-open, eyes-closed
 
+# MOABB keys the imagined task runs '0'..'5' but does NOT key them in acquisition
+# order: PhysionetMI._get_single_subject_data emits hand_runs [4, 8, 12] as keys
+# '0','1','2' and then feet_runs [6, 10, 14] as keys '3','4','5'. The EDF run number
+# is the chronological quantity, so it is what we record and sort on.
+_MOABB_KEY_TO_EDF_RUN: dict[str, int] = {
+    "0": 4, "1": 8, "2": 12,   # hand runs
+    "3": 6, "4": 10, "5": 14,  # feet runs
+}
+
 
 class MoabbDatasetWrapper:
     """Wraps PhysionetMI via MOABB; returns binary (control vs idle) epoch arrays.
@@ -59,7 +68,19 @@ class MoabbDatasetWrapper:
         -------
         X : (N, C, T) float32 — epochs × channels × time-points
         y : (N,) int64 — 1 = control (imagined movement), 0 = idle (rest / baseline)
-        metadata : dict with keys 'subjects', 'channels', 'sfreq', 'n_times'
+        metadata : dict with keys 'subjects', 'channels', 'sfreq', 'n_times',
+            plus the per-epoch provenance arrays 'source', 'run' and 'order'.
+
+        Provenance
+        ----------
+        source : "task" | "baseline" — task runs carry imagined-movement trials and
+            their interleaved rest; baseline runs 1-2 are the continuous eyes-open /
+            eyes-closed recordings sliced into idle epochs.
+        run : EDF run number (1, 2 for baseline; 4, 6, 8, 10, 12, 14 for task).
+        order : true chronological index within the subject's recording. Array order
+            is NOT chronological — baseline runs are appended last but were acquired
+            first, and MOABB keys the task runs out of acquisition order (see
+            _MOABB_KEY_TO_EDF_RUN). This array is the only correct time axis.
         """
         ch_names = list(self.spec.channels)
         sfreq = self.spec.sfreq_target
@@ -71,6 +92,7 @@ class MoabbDatasetWrapper:
         all_X: list[np.ndarray] = []
         all_y: list[int] = []
         all_subj: list[int] = []
+        prov: list[dict] = []  # one dict per epoch: source, run, within_run
 
         for subj in subjects:
             log.info("Loading subject %d", subj)
@@ -80,9 +102,12 @@ class MoabbDatasetWrapper:
                 warnings.simplefilter("ignore")
                 subj_data = self._moabb_ds.get_data(subjects=[subj])
 
-            for run_raw in subj_data[subj]["0"].values():
+            # Appended in MOABB key order to preserve the historical array order;
+            # chronology is carried by 'order', not by position.
+            for run_key, run_raw in subj_data[subj]["0"].items():
                 _epoch_task_run(
-                    run_raw, ch_names, tmin, tmax, subj, all_X, all_y, all_subj
+                    run_raw, ch_names, tmin, tmax, subj, all_X, all_y, all_subj,
+                    prov, _MOABB_KEY_TO_EDF_RUN[str(run_key)],
                 )
 
             # Eyes-open / eyes-closed baseline runs via private MOABB method (ADR-12).
@@ -90,7 +115,10 @@ class MoabbDatasetWrapper:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     raw_base = self._moabb_ds._load_one_run(subj, run_num)
-                _epoch_baseline_run(raw_base, ch_names, n_times, subj, all_X, all_y, all_subj)
+                _epoch_baseline_run(
+                    raw_base, ch_names, n_times, subj, all_X, all_y, all_subj,
+                    prov, run_num,
+                )
 
         X = np.stack(all_X, axis=0).astype(np.float32)
         y = np.array(all_y, dtype=np.int64)
@@ -111,6 +139,13 @@ class MoabbDatasetWrapper:
             # mne.Raw.pick() preserves the requested order, so the array axis order is
             # exactly ch_names. Recorded so the montage contract can be checked.
             "source_channels": ch_names,
+            "source": np.array([p["source"] for p in prov]),
+            "run": np.array([p["run"] for p in prov], dtype=np.int64),
+            "order": chronological_order(
+                np.array(all_subj),
+                np.array([p["run"] for p in prov], dtype=np.int64),
+                np.array([p["within_run"] for p in prov], dtype=np.int64),
+            ),
         }
         return X, y, meta
 
@@ -118,6 +153,23 @@ class MoabbDatasetWrapper:
 # ---------------------------------------------------------------------------
 # Module-level helpers (not part of the public API)
 # ---------------------------------------------------------------------------
+
+def chronological_order(
+    subjects: np.ndarray, runs: np.ndarray, within_run: np.ndarray
+) -> np.ndarray:
+    """Per-epoch chronological index within each subject's recording.
+
+    Ranks by (run number, position within run), independently per subject, so the
+    result is 0..n_subject_epochs-1 for each subject regardless of array order.
+    """
+    order = np.empty(len(subjects), dtype=np.int64)
+    for sid in np.unique(subjects):
+        mask = np.flatnonzero(subjects == sid)
+        # lexsort: last key is primary
+        ranked = mask[np.lexsort((within_run[mask], runs[mask]))]
+        order[ranked] = np.arange(len(ranked), dtype=np.int64)
+    return order
+
 
 def _pick_channels(raw: mne.io.BaseRaw, ch_names: list[str]) -> mne.io.BaseRaw:
     """Return a copy of *raw* with channels selected and reordered to *ch_names*."""
@@ -133,6 +185,8 @@ def _epoch_task_run(
     all_X: list[np.ndarray],
     all_y: list[int],
     all_subj: list[int],
+    prov: list[dict],
+    edf_run: int,
 ) -> None:
     """Epoch one annotated task run; append arrays and labels in-place."""
     with warnings.catch_warnings():
@@ -165,6 +219,7 @@ def _epoch_task_run(
         all_X.append(X[i])
         all_y.append(1 if int(ev_id) in _CONTROL_IDS else 0)
         all_subj.append(subj)
+        prov.append({"source": "task", "run": edf_run, "within_run": i})
 
 
 def _epoch_baseline_run(
@@ -175,6 +230,8 @@ def _epoch_baseline_run(
     all_X: list[np.ndarray],
     all_y: list[int],
     all_subj: list[int],
+    prov: list[dict],
+    edf_run: int,
 ) -> None:
     """Slice a continuous baseline run into non-overlapping idle epochs."""
     with warnings.catch_warnings():
@@ -186,6 +243,7 @@ def _epoch_baseline_run(
         all_X.append(data[:, i * n_times : (i + 1) * n_times])
         all_y.append(0)  # idle
         all_subj.append(subj)
+        prov.append({"source": "baseline", "run": edf_run, "within_run": i})
 
 
 # ---------------------------------------------------------------------------
@@ -277,12 +335,43 @@ class BnciP300Wrapper:
                 X[mask] = EuclideanAligner().fit_transform(X[mask])
             log.info("Euclidean Alignment applied per subject (%d subjects)", len(np.unique(subj_arr)))
 
+        # Per-epoch provenance. BNCI2014_009 has 3 sessions of 1 run each; MOABB
+        # returns epochs grouped by session in acquisition order, so the position
+        # within a (session, run) group is its chronological index there.
+        subj_arr = np.asarray(meta_df["subject"].values)
+        sess_arr = np.asarray(meta_df["session"].values).astype(str)
+        run_arr = np.asarray(meta_df["run"].values).astype(str)
+
+        # Rank sessions/runs by first appearance so 'order' follows acquisition even
+        # if the labels are not numerically sortable.
+        seq_key = np.empty(len(subj_arr), dtype=np.int64)
+        within = np.empty(len(subj_arr), dtype=np.int64)
+        for sid in np.unique(subj_arr):
+            m = np.flatnonzero(subj_arr == sid)
+            seen: dict[tuple[str, str], int] = {}
+            counter: dict[tuple[str, str], int] = {}
+            for i in m:
+                key = (sess_arr[i], run_arr[i])
+                if key not in seen:
+                    seen[key] = len(seen)
+                    counter[key] = 0
+                seq_key[i] = seen[key]
+                within[i] = counter[key]
+                counter[key] += 1
+
         meta: dict = {
             "subjects": list(meta_df["subject"].values),
             "channels": list(self.spec.channels),
             "sfreq": self.spec.sfreq_target,
             "n_times": X.shape[-1],
             "source_channels": returned_channels,
+            # Every P300 epoch is a flash in a task run; there is no baseline-run
+            # sub-population as there is for PhysionetMI. Recorded for a uniform
+            # split-protocol interface across paradigms.
+            "source": np.array(["task"] * len(subj_arr)),
+            "session": sess_arr,
+            "run": run_arr,
+            "order": chronological_order(subj_arr, seq_key, within),
         }
         return X, y, meta
 

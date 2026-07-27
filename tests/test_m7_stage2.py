@@ -58,7 +58,13 @@ def _make_moabb_p300_output(n_epochs=100, n_times=102, n_targets=17,
     y_str = np.array(
         ["Target"] * n_targets + ["NonTarget"] * (n_epochs - n_targets)
     )
-    meta_df = pd.DataFrame({"subject": np.ones(n_epochs, dtype=int)})
+    # BNCI2014_009 has 3 sessions of 1 run each; the wrapper reads session/run to
+    # build per-epoch provenance (Phase 1.1).
+    meta_df = pd.DataFrame({
+        "subject": np.ones(n_epochs, dtype=int),
+        "session": np.array([str(i % 3) for i in range(n_epochs)]),
+        "run": np.array(["0"] * n_epochs),
+    })
     return _FakeEpochs(X, ch_names), y_str, meta_df
 
 

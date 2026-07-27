@@ -92,27 +92,68 @@ def load_rows(paths: list[str]) -> list[dict]:
 
 
 def summarize(rows: list[dict]) -> list[dict]:
-    """One summary row per (paradigm, split, ea_ref, calib_size)."""
-    # subject-level means first: (key, subject) -> [delta across seeds]
-    per_subject: dict[tuple, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    """One summary row per (paradigm, split, ea_ref, calib_size).
+
+    Aggregation order, innermost first:
+
+    1. **Across folds** — with ``--fold-mode average`` the runner writes one row per
+       fold, each a complete independent adaptation (its own baseline, its own
+       adapted head, its own evaluation). Their ``delta_auc`` values are averaged
+       here per (subject, split, ea_ref, size, seed). This is an average of
+       measurements, *not* a prediction ensemble: no logits or probabilities are
+       ever combined.
+    2. **Across seeds** — then averaged per subject, because seeds are re-draws of
+       the same subject's calibration set and are not independent samples.
+    3. **Across subjects** — only at this level does n enter the statistics.
+
+    Rows whose ``status`` is not "ok" are degenerate conditions recorded by the
+    runner with NaN metrics; they are excluded from the statistics but counted in
+    ``n_degenerate`` so the table shows where they occurred.
+    """
+    # (key, subject, seed) -> [delta per fold]
+    per_fold: dict[tuple, list[float]] = defaultdict(list)
+    degenerate: dict[tuple, int] = defaultdict(int)
+
     for r in rows:
-        delta = r.get("delta_auc")
-        if delta in (None, "", "nan"):
-            continue
         key = (
             r.get("paradigm", "?"),
             r.get("split", "stratified"),
             r.get("ea_ref", "session"),
             int(r["calib_size"]),
         )
-        per_subject[key][str(r["subject"])].append(float(delta))
+        if r.get("status", "ok") != "ok":
+            degenerate[key] += 1
+            continue
+        delta = r.get("delta_auc")
+        if delta in (None, "", "nan") or not np.isfinite(float(delta)):
+            degenerate[key] += 1
+            continue
+        per_fold[(key, str(r["subject"]), str(r.get("seed", "")))].append(float(delta))
+
+    # collapse folds -> (key, subject) -> [one value per seed]
+    per_subject: dict[tuple, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    n_folds_seen: dict[tuple, set] = defaultdict(set)
+    for (key, subj, seed), fold_vals in per_fold.items():
+        per_subject[key][subj].append(float(np.mean(fold_vals)))
+        n_folds_seen[key].add(len(fold_vals))
 
     out = []
-    for key in sorted(per_subject, key=lambda k: (k[0], k[1], k[2], k[3])):
+    for key in sorted(set(per_subject) | set(degenerate), key=lambda k: (k[0], k[1], k[2], k[3])):
         paradigm, split, ea_ref, size = key
-        subj_map = per_subject[key]
+        subj_map = per_subject.get(key, {})
+        if not subj_map:
+            out.append({
+                "paradigm": paradigm, "split": split, "ea_ref": ea_ref,
+                "calib_size": size, "n_subjects": 0, "n_seeds": 0, "n_folds": 0,
+                "mean_delta_auc": "", "median_delta_auc": "", "ci95_lo": "",
+                "ci95_hi": "", "n_improved": 0, "wilcoxon_W": "", "p_two_sided": "",
+                "p_one_sided_greater": "", "cohens_dz": "",
+                "n_degenerate": degenerate.get(key, 0),
+            })
+            continue
         subj_means = np.array([np.mean(v) for _, v in sorted(subj_map.items())], dtype=float)
         n_seeds = max(len(v) for v in subj_map.values())
+        n_folds = max(n_folds_seen[key]) if n_folds_seen[key] else 0
 
         finite = subj_means[np.isfinite(subj_means)]
         if finite.size == 0:
@@ -127,6 +168,7 @@ def summarize(rows: list[dict]) -> list[dict]:
             "calib_size": size,
             "n_subjects": int(finite.size),
             "n_seeds": int(n_seeds),
+            "n_folds": int(n_folds),
             "mean_delta_auc": round(float(finite.mean()), 6),
             "median_delta_auc": round(float(np.median(finite)), 6),
             "ci95_lo": round(lo, 6),
@@ -136,14 +178,15 @@ def summarize(rows: list[dict]) -> list[dict]:
             "p_two_sided": round(p2, 6) if np.isfinite(p2) else "",
             "p_one_sided_greater": round(p1, 6) if np.isfinite(p1) else "",
             "cohens_dz": round(_effect_size(finite), 4),
+            "n_degenerate": degenerate.get(key, 0),
         })
     return out
 
 
 FIELDS = [
-    "paradigm", "split", "ea_ref", "calib_size", "n_subjects", "n_seeds",
+    "paradigm", "split", "ea_ref", "calib_size", "n_subjects", "n_seeds", "n_folds",
     "mean_delta_auc", "median_delta_auc", "ci95_lo", "ci95_hi", "n_improved",
-    "wilcoxon_W", "p_two_sided", "p_one_sided_greater", "cohens_dz",
+    "wilcoxon_W", "p_two_sided", "p_one_sided_greater", "cohens_dz", "n_degenerate",
 ]
 
 
