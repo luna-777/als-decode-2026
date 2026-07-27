@@ -60,10 +60,11 @@ def main() -> None:
     ap.add_argument("--strict-montage", action="store_true")
     ap.add_argument(
         "--montage-override", nargs="+", default=None,
-        help="AUDIT CONTROL ONLY. Load data with this channel list instead of the "
-             "config's, bypassing the montage assertion. Used to re-measure the "
-             "pre-audit wrong-montage condition under an otherwise identical "
-             "pipeline, so the montage is the only difference. Never use for results.",
+        help="Load data under this channel list instead of the config's, bypassing "
+             "the montage assertion. A first-class degradation instrument: the "
+             "montage is recorded per row and output is confined to "
+             "experiments/degradation/. For the dose-response sweep use "
+             "scripts/degradation_sweep.py. Never a results path.",
     )
     args = ap.parse_args()
 
@@ -81,17 +82,18 @@ def main() -> None:
         import dataclasses
 
         montage_label = "override"
-        # An overridden montage bypasses the ADR-14 assertion, so its output is not a
-        # result and must never land where the paper's tables are read from.
+        # An overridden montage bypasses the ADR-14 assertion, so its output is a
+        # degradation measurement, never a result. It is confined to
+        # experiments/degradation/ (ADR-24) rather than merely kept out of
+        # experiments/stage3/ — a positive constraint, not a negative one.
+        deg = (ROOT / "experiments" / "degradation").resolve()
         if args.out is None:
-            args.out = "experiments/audit/mi_heldout_montage_override.csv"
-        if Path(args.out).resolve().is_relative_to(
-            (ROOT / "experiments" / "stage3").resolve()
-        ):
+            args.out = str(deg / "mi_heldout_montage_override.csv")
+        if not Path(args.out).resolve().is_relative_to(deg):
             raise SystemExit(
-                f"--montage-override may not write to experiments/stage3/ "
-                f"(got {args.out}). Output from a bypassed montage assertion is audit "
-                f"evidence, not a result; route it to experiments/audit/."
+                f"--montage-override must write under experiments/degradation/ "
+                f"(got {args.out}). Output from a bypassed montage assertion is a "
+                f"degradation measurement, not a result."
             )
         log.warning(
             "AUDIT CONTROL: overriding the montage with %s — the montage assertion "
