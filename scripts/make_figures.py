@@ -354,3 +354,62 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# --------------------------------------------------------------------------- fig 5
+
+def fig_degradation(path: Path, out: Path, arm="stratified"):
+    """Apparent adaptation gain against backbone degradation dose (Round A)."""
+    import csv as _csv
+
+    rows = [r for r in _csv.DictReader(open(path, newline="")) if r["split"] == arm]
+    if not rows:
+        log.warning("fig5: no rows for %s", arm)
+        return
+    sizes = sorted({int(r["calib_size"]) for r in rows})
+    order = ["perm_k0", "perm_k2", "perm_k4", "perm_k8", "perm_k17"]
+    label = {"perm_k0": "0", "perm_k2": "2", "perm_k4": "4",
+             "perm_k8": "8", "perm_k17": "17"}
+
+    fig, ax = plt.subplots(figsize=(COL_W, 2.6))
+    _style(ax)
+    ax.axhline(0, color=INK2, linewidth=0.6, zorder=1)
+
+    # sequential single hue: degradation dose is a magnitude, not an identity
+    ramp = ["#c6dbef", "#9ecae1", "#6baed6", "#3182bd", "#08519c"]
+    for i, size in enumerate(sizes):
+        xs, ys = [], []
+        for cond in order:
+            g = [r for r in rows if r["montage_condition"] == cond
+                 and int(r["calib_size"]) == size]
+            if not g:
+                continue
+            xs.append(float(g[0]["mean_baseline_auc"]))
+            ys.append(float(g[0]["mean_delta_auc"]))
+        if len(xs) < 2:
+            continue
+        ax.plot(xs, ys, color=ramp[i % len(ramp)], marker="o", markersize=3,
+                markeredgecolor="white", markeredgewidth=0.4,
+                label=f"N={size}", zorder=3)
+
+    pre = [r for r in rows if r["montage_condition"] == "preaudit_hardcoded"]
+    if pre:
+        ax.scatter([float(r["mean_baseline_auc"]) for r in pre],
+                   [float(r["mean_delta_auc"]) for r in pre],
+                   marker="x", s=22, color="#D55E00", linewidth=1.0, zorder=5,
+                   label="historical montage")
+
+    ax.set_xlabel("mean held-out baseline AUC  (backbone intact at left)")
+    ax.set_ylabel(r"mean $\Delta$AUC (apparent gain)")
+    ax.set_title("MI: apparent adaptation gain tracks\nbackbone degradation",
+                 loc="left", fontweight="bold")
+    ax.invert_xaxis()
+    ax.legend(loc="upper left", handlelength=1.4, borderpad=0.25,
+              labelspacing=0.25, fontsize=5.6, title="calibration size",
+              title_fontsize=5.6)
+    ax.annotate("channels permuted: 0 to 17", xy=(0.97, 0.04),
+                xycoords="axes fraction", ha="right", fontsize=5, color=INK2)
+    for ext in ("pdf", "svg", "png"):
+        fig.savefig(out / f"fig5_degradation_{arm}.{ext}")
+    plt.close(fig)
+    log.info("fig5_degradation_%s", arm)
