@@ -530,6 +530,119 @@ All five arms are measurable at all five sizes; `purged_stratified` at N=480 lea
 
 ---
 
+## 0.9 — Phase 2 results under one code version
+
+All numbers below come from `experiments/stage3/{mi,p300}_results.csv` (13,750 and
+1,750 rows), summarised in `*_summary.csv`. MI: 5 folds (`version_27..30`, `41`)
+averaged per subject, 5 arms, sizes {10, 20, 50, 100, 150, 200}, seeds 42–46,
+purge sweep k ∈ {1, 2, 5}. P300: LOSO-10, every subject scored against the fold
+that held it out, verified with no fallback.
+
+### The headline result does not reproduce
+
+| condition | pre-audit (wrong montage) | Phase 2 (correct montage) |
+|---|---|---|
+| `stratified`, N=200, mean ΔAUC | **+0.0885** | **+0.0004** |
+| subjects improved | 9/10 | 6/10 |
+| Wilcoxon two-sided p | 0.0039 (published as 0.0077) | 0.9219 |
+
+Head-only adaptation is **negative at every other MI condition measured**, and the
+negative results are the statistically significant ones. Nothing is significantly
+positive anywhere in the MI grid.
+
+The explanation is visible in the baselines. With the correct montage the frozen
+backbone already scores 0.776–0.783 on held-out subjects, against ~0.70 under the
+scrambled montage. The pre-audit "adaptation gain" was largely the head recovering
+from a broken input mapping. Once the mapping is right, re-fitting a linear head on
+≤200 epochs mostly overfits.
+
+### Mechanism: which sub-population the calibration set covers
+
+Paired per-subject contrasts, MI, `ea_ref=session`:
+
+| contrast | what it isolates | N=100 | N=150 |
+|---|---|---|---|
+| `stratified` − `stratified_task_only` | allowing baseline-idle into calibration | +0.0353 (p=0.19) | +0.0445 (p=0.084) |
+| `stratified_task_only` − `temporal_array` | temporal spread *within* task runs | +0.0164 (p=0.43) | +0.0275 (p=0.11) |
+| `temporal_chrono` − `temporal_array` | baseline-first vs baseline-never | +0.0307 (p=0.56) | **+0.0752 (p=0.027)** |
+
+`stratified_task_only` sits **62–68% of the way from `stratified` toward
+`temporal_array`** at N=100 and N=150 — i.e. it behaves more like the temporal arm.
+Removing baseline-run idle from the calibration *draw*, while leaving the draw
+stratified in time and the evaluation set untouched, reproduces most of the
+temporal arm's deficit.
+
+`temporal_chrono` is the independent test and it is the only mechanism contrast
+that reaches significance: putting the baseline runs *first* into calibration —
+the exact reverse of `temporal_array`, which never includes them — recovers
++0.0752 at N=150 (8/10 subjects, p=0.027).
+
+> **Both arms point the same way: the driver is coverage of the baseline-run idle
+> sub-population in the calibration set, not temporal spread within task runs.**
+> Temporal spread contributes a smaller, non-significant residual.
+
+An important structural aid to this reading: `stratified_task_only` and
+`temporal_array` have **identical evaluation-set composition** at every N (both
+leave 174−N task epochs plus all 60 baseline epochs), so the contrast between them
+cannot be an artefact of the evaluation denominator.
+
+### Arms that could not be measured
+
+Reported, never silently skipped (ADR-22). 2,495 of 13,750 MI rows are degenerate:
+
+| arm | N | why |
+|---|---|---|
+| `temporal_array` | 200 | evaluation set is 34 epochs, all baseline-run idle → single class |
+| `stratified_task_only` | 200 | task pool is 174 epochs; 200 cannot be drawn |
+| `temporal_chrono` | 10, 20, 50 | **calibration** set is entirely baseline-run idle → single class |
+| `purged_stratified` | ≥100 (k=5), ≥200 (k=1,2) | purging empties the evaluation set |
+
+`temporal_chrono` failing at small N was not anticipated in Phase 0.8, which
+checked only the evaluation side. Chronologically the first 60 epochs of every
+PhysionetMI subject are the eyes-open/eyes-closed baseline runs, all label 0, so no
+discriminative head can be trained at N ≤ 60. The arm only becomes measurable at
+N ≥ 100, once calibration reaches into the task runs.
+
+### Leakage control
+
+`purged_stratified` minus plain `stratified` ranges from −0.008 to +0.034 across
+k ∈ {1, 2, 5} and all measurable N, with p ≥ 0.13 except two marginal negatives at
+N=10. Purging changes nothing material — but there is no advantage left to survive
+it, since `stratified` itself is at best +0.0004.
+
+### EA reference scope
+
+Paired, absolute AUC, `calibration` minus `session`:
+
+| paradigm | n paired | Δ baseline AUC | Δ ΔAUC |
+|---|---|---|---|
+| MI | 2,500 | **−0.00059** (sd 0.0074) | +0.00096 |
+| P300 | 500 | **+0.00006** (sd 0.0010) | −0.00015 |
+
+Transductive session-scoped EA buys essentially nothing over the deployable
+calibration-scoped variant. The obvious reviewer objection to fitting EA over the
+evaluation epochs is answerable with a measurement: it does not matter here.
+
+### P300
+
+All 10 subjects, LOSO-10, 0 degenerate rows. Every arm is negative at every size
+and every result is significant (p 0.004–0.020, 1/10 subjects improving),
+reproducing the finding recorded in commit `d9221ab`. Best case is
+`stratified` at N=480: **−0.0157**.
+
+Two null checks came out exactly as predicted, which validates the split code
+against known-answer cases — across 250 paired rows each, **max |difference| = 0.0**:
+
+* `stratified_task_only` ≡ `stratified` — BNCI2014_009 has no baseline-run
+  sub-population, so restricting the draw to task epochs is a no-op.
+* `temporal_array` ≡ `temporal_chrono` — MOABB returns P300 epochs in acquisition
+  order, so the chronological reordering is the identity for this dataset.
+
+Both consequences mean **the mechanism question is MI-only**; the P300 arms can
+only speak to temporal spread, and there they show nothing.
+
+---
+
 ## Reproduction commands
 
 ```bash

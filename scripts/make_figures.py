@@ -198,12 +198,12 @@ def fig_delta_vs_size(rows, out: Path, paradigm="mi", ea_ref="session", purge_k=
         if not xs:
             continue
         c = ARM_COLOR[arm]
+        lab = ARM_LABEL[arm]
+        if arm == "purged_stratified":
+            lab += f" (k={purge_k})"
         ax.fill_between(xs, los, his, color=c, alpha=0.13, linewidth=0, zorder=2)
         ax.plot(xs, ys, color=c, marker=ARM_MARKER[arm], markersize=3,
-                markeredgecolor="white", markeredgewidth=0.4, zorder=3,
-                label=ARM_LABEL[arm])
-        ax.annotate(ARM_LABEL[arm], (xs[-1], ys[-1]), textcoords="offset points",
-                    xytext=(3, 0), fontsize=5.2, color=c, va="center", zorder=4)
+                markeredgecolor="white", markeredgewidth=0.4, zorder=3, label=lab)
 
     ax.set_xscale("log")
     ax.set_xticks(sizes); ax.set_xticklabels([str(s) for s in sizes])
@@ -212,9 +212,16 @@ def fig_delta_vs_size(rows, out: Path, paradigm="mi", ea_ref="session", purge_k=
     ax.set_ylabel(r"$\Delta$AUC (adapted $-$ baseline)")
     ax.set_title(f"{paradigm.upper()}: adaptation gain by split arm",
                  loc="left", fontweight="bold")
-    ax.set_xlim(min(sizes) * 0.85, max(sizes) * 1.9)
-    ax.legend(loc="upper left", ncol=1, handlelength=1.4, borderpad=0.2,
-              labelspacing=0.25)
+    ax.set_xlim(min(sizes) * 0.9, max(sizes) * 1.08)
+    # 5 series: identity is carried by the legend plus a distinct marker per arm,
+    # never by colour alone. Direct labels are omitted because with five crossing
+    # lines they collide; the summary CSV is the table view.
+    ax.legend(loc="lower right", ncol=1, handlelength=1.6, borderpad=0.3,
+              labelspacing=0.3, fontsize=5.6)
+    ax.annotate("adaptation helps", xy=(0.015, 0.965), xycoords="axes fraction",
+                fontsize=5, color=INK2, va="top")
+    ax.annotate("adaptation hurts", xy=(0.015, 0.03), xycoords="axes fraction",
+                fontsize=5, color=INK2, va="bottom")
     for ext in ("pdf", "svg", "png"):
         fig.savefig(out / f"fig2_delta_vs_size_{paradigm}.{ext}")
     plt.close(fig)
