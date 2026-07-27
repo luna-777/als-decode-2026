@@ -24,7 +24,11 @@ log = logging.getLogger(__name__)
 
 _STAGE2_KEY = "model.backbone.net.conv_spatial.parametrizations.weight.original"
 
-_DATASET_CONFIG = {"mi": "physionet_mi.yaml", "p300": "bnci_009.yaml"}
+_DATASET_CONFIG = {
+    "mi": "physionet_mi.yaml",
+    "p300": "bnci_009.yaml",
+    "als": "bnci_008.yaml",   # BNCI2014_008, the 8-patient ALS target (§4.3)
+}
 
 
 @dataclass(frozen=True)

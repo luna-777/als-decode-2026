@@ -343,6 +343,12 @@ def calibration_curve(
     n_channels = len(spec.channels)
     log.info("Montage from config: %d channels %s", n_channels, list(spec.channels))
 
+    # For the ALS target the checkpoints were trained on BNCI2014_009, so the montage
+    # contract must be read against *that* config, not against bnci_008's. Asserting
+    # an inferred montage against the config it was inferred from would be circular
+    # and would silently accept any subset claim (§4.3) rather than testing it.
+    contract_spec = spec_from_config("p300") if paradigm == "als" else spec
+
     seeds = list(seeds) if seeds else [42, 43, 44, 45, 46]
     arms = list(arms) if arms else list(SPLIT_ARMS)
     ea_refs = list(ea_refs) if ea_refs else ["session"]
@@ -362,15 +368,20 @@ def calibration_curve(
     spec = dataclasses.replace(spec, euclidean_alignment=False)
 
     if calib_sizes is None:
-        calib_sizes = [24, 48, 96, 240, 480] if paradigm == "p300" else [10, 20, 50, 100, 200]
+        calib_sizes = ([10, 20, 50, 100, 200] if paradigm == "mi"
+                       else [24, 48, 96, 240, 480])
 
     wrapper = get_dataset(spec)
-    test_subjects = wrapper.subject_list[-10:]
+    # ALS is a pure transfer target: every patient is unseen by every source-domain
+    # checkpoint, so all 8 are scored, not a held-out tail.
+    test_subjects = (wrapper.subject_list if paradigm == "als"
+                     else wrapper.subject_list[-10:])
     log.info("Test subjects for Stage 3: %s", test_subjects)
 
     # Folds are named explicitly; nothing is selected by ranking (docs/AUDIT.md §0.4).
     mi_folds = None
     if paradigm != "p300":
+        # MI and ALS both name their folds explicitly; only P300 resolves per subject.
         mi_folds = load_folds(log_dir, folds or [], expect_channels=n_channels)
         if fold_mode == "pinned" and len(mi_folds) != 1:
             raise ValueError(
@@ -403,7 +414,8 @@ def calibration_curve(
         for ref in subj_folds:
             # The montage contract: what this checkpoint was trained on must equal
             # what we just loaded, name for name and position for position.
-            montage = load_montage(ref.version_dir, spec, n_times, strict=strict_montage)
+            montage = load_montage(ref.version_dir, contract_spec, n_times,
+                                   strict=strict_montage)
             assert_montage_matches(
                 montage,
                 meta["channels"],
@@ -522,7 +534,7 @@ def main() -> None:
     from src.datasets.splits import SPLIT_ARMS
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--paradigm", choices=["mi", "p300"], required=True)
+    parser.add_argument("--paradigm", choices=["mi", "p300", "als"], required=True)
     parser.add_argument("--log-dir", default="lightning_logs")
     parser.add_argument("--calib-sizes", nargs="+", type=int, default=None)
     parser.add_argument("--adapt-epochs", type=int, default=100)

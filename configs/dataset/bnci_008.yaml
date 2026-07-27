@@ -1,0 +1,32 @@
+# Stage 3 clinical target — BNCI2014_008, 8 patients with ALS. §4.3
+#
+# Montage verified empirically against MOABB 1.5.0 rather than taken from
+# docs/design.md: the dataset returns 10 channels (8 EEG + 'Target stim' +
+# 'Flash stim'), and the 8 EEG channels are
+#     Fz, Cz, Pz, Oz, P3, P4, PO7, PO8
+# in exactly the order BNCI2014_009 returns its first eight. The §4.3 claim that
+# the ALS montage is a strict subset of the healthy montage therefore holds, and
+# the transfer needs no channel imputation. (Note §4.2's stated 16-channel order
+# for BNCI2014_009 is wrong — see docs/AUDIT.md §0.2 — so this montage was checked
+# against the data, not the document.)
+moabb_name: BNCI2014_008
+paradigm: p300
+sfreq_target: 128.0          # matches the Stage 2 backbone's n_times=102
+
+exclude_subjects: []         # all 8 patients retained; quality varies, reported per patient
+
+channel_config: default
+channels:
+  default:
+    - Fz
+    - Cz
+    - Pz
+    - Oz
+    - P3
+    - P4
+    - PO7
+    - PO8
+
+epoch_window: [0.0, 0.8]     # identical to bnci_009 so the backbone transfers unchanged
+band: [1.0, 24.0]
+euclidean_alignment: true

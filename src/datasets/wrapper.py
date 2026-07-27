@@ -265,18 +265,35 @@ _BNCI009_EXPECTED_16: list[str] = [
 ]
 
 
+# P300 datasets this wrapper can drive. Both are 6x6 Farwell-Donchin spellers at
+# 256 Hz; BNCI2014_008 is the 8-patient ALS target and BNCI2014_009 the 10-subject
+# healthy source. Channel resolution is by name in both cases, so the 8-channel ALS
+# montage being a subset of the healthy montage is enforced rather than assumed.
+_P300_DATASETS: dict[str, str] = {
+    "BNCI2014_009": "BNCI2014_009",
+    "BNCI2014_008": "BNCI2014_008",
+}
+
+
 class BnciP300Wrapper:
-    """Wraps BNCI2014_009 via MOABB's P300 paradigm; returns binary epoch arrays.
+    """Wraps a BNCI P300 dataset via MOABB's P300 paradigm; returns binary epochs.
 
     Labels: 1 = Target, 0 = NonTarget.
     All bandpass filtering and epoching are delegated to MOABB/MNE's P300 paradigm.
+    The concrete dataset comes from spec.moabb_name.
     """
 
     def __init__(self, spec: "DatasetSpec") -> None:
-        from moabb.datasets import BNCI2014_009
+        import moabb.datasets as _mds
 
+        name = getattr(spec, "moabb_name", "BNCI2014_009")
+        if name not in _P300_DATASETS:
+            raise ValueError(
+                f"Unsupported P300 dataset {name!r}; expected one of "
+                f"{sorted(_P300_DATASETS)}"
+            )
         self.spec = spec
-        self._moabb_ds = BNCI2014_009()
+        self._moabb_ds = getattr(_mds, name)()
         self._subject_list: list[int] = [
             s for s in self._moabb_ds.subject_list if s not in spec.exclude_subjects
         ]

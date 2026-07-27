@@ -126,3 +126,25 @@ def test_preaudit_montage_is_not_a_permutation_of_config():
 
 def test_preaudit_montage_shares_no_position_with_config():
     assert sum(a == b for a, b in zip(PREAUDIT_MI_MONTAGE, CFG)) == 0
+
+
+# --------------------------------------------------------------------------- Phase 4 montage
+
+def test_als_montage_is_a_strict_subset_of_the_healthy_montage():
+    """§4.3's transfer claim, checked against config rather than against design.md.
+
+    docs/design.md §4.2 states BNCI2014_009's channel order incorrectly
+    (docs/AUDIT.md §0.2), so the subset property is asserted from the configs that
+    the code actually reads and, at run time, by the by-name channel resolution.
+    """
+    from src.models.checkpoints import spec_from_config
+
+    als = spec_from_config("als")
+    healthy = spec_from_config("p300")
+    assert als.moabb_name == "BNCI2014_008"
+    assert set(als.channels).issubset(set(healthy.channels))
+    # identical order, so a Stage 2 checkpoint transfers with no reindexing at all
+    assert als.channels == healthy.channels
+    assert als.sfreq_target == healthy.sfreq_target
+    assert tuple(als.epoch_window) == tuple(healthy.epoch_window)
+    assert tuple(als.band) == tuple(healthy.band)
