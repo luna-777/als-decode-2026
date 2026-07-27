@@ -346,3 +346,55 @@ the lookup should not have been paradigm-blind in the first place.
 **Rejected:** Namespacing subject IDs per paradigm in `val_subjects.json` — would
 require rewriting existing metadata files; filtering on a property already present
 in the checkpoint is sufficient.
+
+---
+
+## ADR-24 — Montage override is an instrument, confined by a positive constraint
+
+**Decision:** `--montage-override` is retained and promoted. Output from any run
+with a bypassed montage assertion is confined to `experiments/degradation/` by a
+positive check (`is_relative_to(degradation_dir)`), the effective montage and
+permutation seed are recorded on every row, and `src/datasets/degradation.py`
+provides the permutation instrument. `scripts/degradation_sweep.py` applies
+degradation to data whose montage contract has already been asserted, rather than
+bypassing the contract at all.
+
+**Rationale:** Deleting the flag would have removed the only way to measure the
+thing the audit found. The dose-response it produced (§0.10) is the result that
+explains the pre-audit headline: apparent adaptation gain is a monotone function of
+backbone damage, ρ = −1.000, and restoring the historical montage under the
+original protocol restores +0.0863 against the published +0.0885. A destructive
+capability with a recorded provenance trail and a confined output path is safer
+than no capability, because the alternative is an unexplained result.
+
+The sweep does not bypass ADR-14 at all: permuting the channel axis of a verified
+load is exactly equivalent to loading a permuted list (channel selection is a pure
+gather; EA commutes with permutation), so the assertion still runs and still
+passes, and the degradation is an explicit transformation of verified data.
+
+**Rejected:** Deleting the flag once the audit closed — it is the instrument, not
+the residue. Bypassing the assertion inside the sweep — unnecessary, given the
+equivalence, and it would have removed the guarantee that the *base* load is right.
+
+---
+
+## ADR-25 — Where the confound is structural, report the confound
+
+**Decision:** `scripts/analyze_confound.py` reports collinearity diagnostics
+(correlation, VIF with a properly specified auxiliary regression) alongside every
+coefficient, aggregates fold and seed replicates to subject level before fitting,
+and states "not separable" rather than interpreting coefficients when
+|r| ≥ 0.95 or VIF ≥ 10.
+
+**Rationale:** In PhysionetMI, calibration coverage of baseline runs and
+calibration class ratio are related by an identity, not by a nuisance correlation:
+baseline runs contain no positive-class epochs, so
+`pos_rate = p_task × (1 − baseline_frac)`. With r = −0.997 to −1.000 the design
+cannot attribute an effect to either regressor, and a cluster-robust fit that
+appears to do so returns coefficients whose signs contradict the marginal
+relationship. Reporting "driver unresolved" is the finding; reporting a
+coefficient would be an artefact dressed as a mechanism.
+
+**Rejected:** Dropping `calib_pos_rate` to obtain a clean coefficient on coverage —
+that is the confound, not a solution to it. Reporting the cluster-robust
+"significant" coefficients at N=100/150 without the sign-reversal diagnostic.

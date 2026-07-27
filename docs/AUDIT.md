@@ -643,6 +643,183 @@ only speak to temporal spread, and there they show nothing.
 
 ---
 
+## 0.10 — Round A: apparent adaptation gain is a monotone function of montage damage
+
+`experiments/degradation/mi_montage_degradation.csv`, 22,400 rows. Permute *k* of
+the 17 channel positions (k ∈ {0, 2, 4, 8, 17}, 3 permutation seeds), plus the
+historical montage as its own condition. Folds `version_27..30` averaged, arms
+`stratified` and `temporal_array`, sizes {10, 50, 100, 200}, 5 calibration seeds.
+
+`stratified`, mean over folds, permutation seeds and calibration seeds:
+
+| | k=0 | k=2 | k=4 | k=8 | k=17 |
+|---|---|---|---|---|---|
+| **mean baseline AUC** | 0.7791 | 0.7673 | 0.7421 | 0.7098 | 0.6370 |
+| ΔAUC, N=200 | −0.0011 | +0.0027 | +0.0094 | +0.0259 | **+0.0747** |
+| ΔAUC, N=100 | −0.0173 | −0.0151 | −0.0103 | +0.0014 | +0.0415 |
+| ΔAUC, N=50 | −0.0287 | −0.0259 | −0.0204 | −0.0082 | +0.0266 |
+
+Spearman ρ between mean baseline AUC and mean ΔAUC across the six montage
+conditions is **−1.000 (p<0.0001)** at N=50, 100 and 200, and −0.943 at N=10;
+Pearson r ≤ −0.98 at every size. The worse the backbone's input, the more
+head-only adaptation appears to help.
+
+> **Apparent adaptation gain measures backbone damage.** It is not a property of
+> the adaptation method.
+
+### The pre-audit headline reproduces exactly
+
+Narrowing the historical-montage condition to the original protocol:
+
+| protocol | baseline | ΔAUC | improved |
+|---|---|---|---|
+| historical montage, 4 folds averaged, 5 seeds | 0.7157 | +0.0234 | 8/10 |
+| historical montage, `version_28` only, 5 seeds | 0.7225 | +0.0386 | 9/10 |
+| **historical montage, `version_28` only, seed 42** | **0.6841** | **+0.0863** | **10/10** |
+| *published (archived `mi_wilcoxon.csv`)* | *0.6949* | *+0.0885* | *9/10* |
+
+The residual is head-training stochasticity: the old `_adapt_head` never seeded
+its DataLoader shuffle. **Restoring the defect restores the result.** Averaging
+folds and seeds pulls the same condition to +0.0234, which is why Phase 2 did not
+surface it.
+
+### A nuance worth recording
+
+The historical montage is **not** the maximal degradation, despite sharing zero
+array positions with the config list (§0.1). It is a systematic one-position shift
+within a spatially ordered montage, so most channels land on a physical neighbour
+(FC3→FC5, C3→C5, …). Its baseline (0.716) sits between k=4 and k=8, well above
+k=17's 0.637. *Zero positions agree* and *maximally scrambled* are different
+quantities, and only the latter is what a random derangement produces.
+
+---
+
+## 0.11 — Round B: coverage and class ratio cannot be separated
+
+Regression of `delta_auc` on `calib_baseline_frac` with `calib_pos_rate` as
+covariate, on the existing Phase 2 rows (`scripts/analyze_confound.py`).
+
+**The two regressors are linked by construction, not by accident.** Baseline-run
+epochs are all label 0, so across all 7,755 usable rows
+
+```
+calib_pos_rate = 0.5034 − 0.4429 × calib_baseline_frac        (R² = 0.879)
+```
+
+with the intercept matching the observed task-only positive rate of 0.512.
+
+Aggregated to subject level — the honest n, since fold and seed replicates are
+repeated measurements of one subject:
+
+| N | r(coverage, pos_rate) | VIF | verdict |
+|---|---|---|---|
+| 10 | −0.999 | 1851 | not separable |
+| 20 | −1.000 | 7455 | not separable |
+| 50 | −0.999 | 777 | not separable |
+| 100 | −0.998 | 307 | not separable |
+| 150 | −0.999 | 584 | not separable |
+| 200 | −0.997 | 389 | not separable |
+
+No coefficient is significant and the signs flip across sizes. Under the strongest
+available test — raw rows, subject fixed effects, subject-clustered CR1 standard
+errors, which exploits the within-arm seed jitter that aggregation averages away —
+N=100 and N=150 return "significant" coefficients whose **signs contradict the
+marginal relationship**: `stratified` has both higher coverage *and* better ΔAUC
+than `stratified_task_only`, yet β_coverage comes out −0.61. That sign reversal is
+a textbook collinearity artefact, not a finding.
+
+> **The §0.9 mechanism reading is not supported.** Composition matters — the arms
+> differ, and `temporal_chrono` vs `temporal_array` is significant at N=150 — but
+> **which component of composition drives it is unresolved.**
+
+This is a property of the design, not of the analysis: within PhysionetMI no
+calibration set can have high baseline-run coverage *and* a balanced class ratio,
+because baseline runs contain no positive-class epochs at all. Only 360 of 7,755
+rows have coverage >0.30 together with pos_rate >0.35, and those come from seed
+jitter rather than from a design point.
+
+**What would resolve it** (not run — Round B was scoped to existing data): MI task
+runs contain T0 rest intervals, which are label 0 with *task* provenance. A
+calibration pool drawn from those would hold class ratio fixed while varying
+baseline-run provenance, which is the contrast the current arms cannot make.
+
+---
+
+## 0.12 — Phase 4: BNCI2014_008, the ALS target
+
+`experiments/stage3/als_results.csv`, 10,000 rows. All 8 patients, all five arms,
+sizes {24, 48, 96, 240, 480}, 5 seeds, all 10 BNCI2014_009 LOSO folds averaged.
+
+### Montage verified against the data, not the document
+
+BNCI2014_008 returns **10 channels** — 8 EEG plus `Target stim` and `Flash stim` —
+and the EEG channels are `Fz, Cz, Pz, Oz, P3, P4, PO7, PO8`, exactly the order
+BNCI2014_009 returns its first eight. design.md §4.3's strict-subset claim
+therefore **holds**, and the transfer needs no channel imputation. This was checked
+against MOABB rather than against §4.2, which is already known to state
+BNCI2014_009's channel order incorrectly (§0.2). The montage contract is asserted
+against the **bnci_009** config, since asserting an inferred montage against the
+config it was inferred from would be circular.
+
+### Per-patient baseline AUC — the full distribution
+
+| patient | 3 | 2 | 4 | 1 | 6 | 8 | 7 | 5 |
+|---|---|---|---|---|---|---|---|---|
+| baseline AUC | 0.595 | 0.579 | 0.574 | 0.564 | 0.559 | 0.547 | 0.531 | 0.512 |
+
+mean 0.558, median 0.562, range 0.512–0.595, sd 0.027. **Every patient is above
+chance; not one reaches 0.60.** The healthy BNCI2014_009 reference under the same
+backbone is 0.716.
+
+> Healthy→ALS transfer works, but weakly: the backbone loses roughly 0.16 AUC
+> crossing from healthy subjects to patients. Reporting the mean alone (0.558)
+> would hide that the best patient (0.595) is still far below the worst healthy
+> subject.
+
+### Per-patient ΔAUC, `stratified`
+
+| patient | N=24 | N=48 | N=96 | N=240 | N=480 |
+|---|---|---|---|---|---|
+| 1 | −0.061 | −0.057 | −0.045 | −0.032 | −0.022 |
+| 2 | −0.051 | −0.035 | −0.032 | −0.018 | −0.009 |
+| 3 | −0.047 | −0.051 | −0.051 | −0.031 | −0.037 |
+| 4 | −0.037 | −0.040 | −0.022 | −0.024 | −0.007 |
+| 5 | −0.019 | −0.018 | −0.009 | **+0.009** | **+0.018** |
+| 6 | −0.023 | −0.036 | −0.033 | −0.028 | −0.022 |
+| 7 | −0.003 | −0.015 | **+0.019** | **+0.032** | **+0.048** |
+| 8 | −0.025 | −0.022 | −0.018 | −0.011 | −0.002 |
+| **mean** | −0.033 | −0.034 | −0.024 | −0.013 | −0.004 |
+| **improved** | 0/8 | 0/8 | 1/8 | 2/8 | 2/8 |
+
+Adaptation is significantly negative at N=24, 48 and 96 (p=0.008, 0.008, 0.039)
+and not significantly different from zero at N=240 and 480. **At no calibration
+size does head-only adaptation help the ALS cohort on average.**
+
+### The ALS cohort independently replicates Round A
+
+The two patients who benefit — 7 and 5 — are the two with the *lowest* baseline
+AUC. Across patients, baseline AUC and ΔAUC are negatively correlated at every
+calibration size, using natural variation in transfer quality rather than induced
+damage:
+
+| N | 24 | 48 | 96 | 240 | 480 |
+|---|---|---|---|---|---|
+| Spearman ρ | −0.786 | −0.738 | −0.786 | −0.690 | −0.786 |
+| p | 0.021 | 0.037 | 0.021 | 0.058 | 0.021 |
+
+With only 8 patients this reaches p<0.05 at four of five sizes. It is the same
+relationship Round A produced by deliberately breaking the montage, arrived at
+independently.
+
+### Null checks
+
+Both hold exactly, over 2,000 paired rows each, **max |difference| = 0.0**:
+`stratified_task_only` ≡ `stratified` and `temporal_array` ≡ `temporal_chrono` —
+BNCI2014_008, like BNCI2014_009, has no baseline-run sub-population and is
+returned in acquisition order.
+
+---
+
 ## Reproduction commands
 
 ```bash

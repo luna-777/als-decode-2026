@@ -413,3 +413,66 @@ def fig_degradation(path: Path, out: Path, arm="stratified"):
         fig.savefig(out / f"fig5_degradation_{arm}.{ext}")
     plt.close(fig)
     log.info("fig5_degradation_%s", arm)
+
+
+# --------------------------------------------------------------------------- fig 6
+
+def fig_als_per_patient(rows, out: Path, arm="stratified"):
+    """Per-patient ALS distribution — never a mean alone (design.md §4.3)."""
+    from collections import defaultdict as _dd
+
+    ok = [r for r in rows if r.get("status") == "ok"]
+    base = _dd(list)
+    delt = _dd(lambda: _dd(list))
+    for r in ok:
+        base[int(r["subject"])].append(float(r["baseline_auc"]))
+        if r["split"] == arm:
+            delt[int(r["calib_size"])][int(r["subject"])].append(float(r["delta_auc"]))
+    if not delt:
+        log.warning("fig6: no rows for %s", arm)
+        return
+    patients = sorted(base)
+    b = {s: float(np.mean(v)) for s, v in base.items()}
+    sizes = sorted(delt)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(FULL_W, 2.5))
+
+    _style(ax1)
+    order = sorted(patients, key=lambda s: -b[s])
+    ax1.bar(range(len(order)), [b[s] for s in order], width=0.66,
+            color="#0072B2", linewidth=0, zorder=3)
+    ax1.axhline(0.5, color=INK2, linewidth=0.7, linestyle=":", zorder=4)
+    ax1.annotate("chance", xy=(-0.4, 0.503), fontsize=5, color=INK2,
+                 ha="left", va="bottom")
+    ax1.axhline(0.7160, color="#D55E00", linewidth=0.9, linestyle="--", zorder=4)
+    ax1.annotate("healthy BNCI2014_009 (0.716)", xy=(-0.4, 0.722), fontsize=5,
+                 color="#D55E00", va="bottom")
+    ax1.set_xticks(range(len(order)))
+    ax1.set_xticklabels([str(s) for s in order])
+    ax1.set_ylim(0.45, 0.79)
+    ax1.set_xlabel("ALS patient")
+    ax1.set_ylabel("baseline AUC (no adaptation)")
+    ax1.set_title("Transfer quality varies by patient", loc="left", fontweight="bold")
+
+    _style(ax2)
+    ax2.axhline(0, color=INK2, linewidth=0.6, zorder=1)
+    ramp = ["#c6dbef", "#9ecae1", "#6baed6", "#3182bd", "#08519c"]
+    for i, N in enumerate(sizes):
+        ys = [float(np.mean(delt[N][s])) for s in order]
+        ax2.plot(range(len(order)), ys, marker="o", markersize=3,
+                 color=ramp[i % len(ramp)], markeredgecolor="white",
+                 markeredgewidth=0.4, label=f"N={N}", zorder=3)
+    ax2.set_xticks(range(len(order)))
+    ax2.set_xticklabels([str(s) for s in order])
+    ax2.set_xlabel("ALS patient (sorted by baseline AUC, best first)")
+    ax2.set_ylabel(r"$\Delta$AUC")
+    ax2.set_title("Adaptation helps only the worst-fit patients",
+                  loc="left", fontweight="bold")
+    ax2.legend(loc="upper left", fontsize=5.6, handlelength=1.4, borderpad=0.25,
+               labelspacing=0.25, title="calibration size", title_fontsize=5.6)
+
+    fig.tight_layout()
+    for ext in ("pdf", "svg", "png"):
+        fig.savefig(out / f"fig6_als_per_patient.{ext}")
+    plt.close(fig)
+    log.info("fig6_als_per_patient")
