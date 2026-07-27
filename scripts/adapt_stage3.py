@@ -322,7 +322,7 @@ def calibration_curve(
     seeds: list[int] | None = None,
     arms: list[str] | None = None,
     ea_refs: list[str] | None = None,
-    purge_k: int = 5,
+    purge_ks: list[int] | None = None,
     folds: list[str] | None = None,
     fold_mode: str = "pinned",
     strict_montage: bool = False,
@@ -346,6 +346,7 @@ def calibration_curve(
     seeds = list(seeds) if seeds else [42, 43, 44, 45, 46]
     arms = list(arms) if arms else list(SPLIT_ARMS)
     ea_refs = list(ea_refs) if ea_refs else ["session"]
+    purge_ks = list(purge_ks) if purge_ks else [5]
     for a in arms:
         if a not in SPLIT_ARMS:
             raise ValueError(f"Unknown split arm {a!r}; expected one of {SPLIT_ARMS}")
@@ -383,7 +384,7 @@ def calibration_curve(
         log.info("Subject %s — loading epochs…", subj)
 
         subj_folds = (
-            [loso_fold_for_subject(log_dir, subj, strict=True)]
+            [loso_fold_for_subject(log_dir, subj, n_channels=n_channels, strict=True)]
             if paradigm == "p300" else mi_folds
         )
 
@@ -432,18 +433,23 @@ def calibration_curve(
 
             for ea_ref in ea_refs:
                 for arm in arms:
-                    for n_calib in calib_sizes:
+                    # purge_k only affects purged_stratified; every other arm is run
+                    # once with the value recorded as 0 so the column is unambiguous.
+                    ks = purge_ks if arm == "purged_stratified" else [0]
+                    for k in ks:
+                      for n_calib in calib_sizes:
                         for sd in seeds:
                             row = _run_one(
                                 model=model, pp=pp, X_noea=X_noea, y_all=y_all,
                                 order=order, source=source, arm=arm, n_calib=n_calib,
-                                seed=sd, ea_ref=ea_ref, purge_k=purge_k,
+                                seed=sd, ea_ref=ea_ref, purge_k=k,
                                 feats_session=feats_session,
                                 n_adapt_epochs=n_adapt_epochs, adapt_lr=adapt_lr,
                             )
                             if row is None:
                                 continue
                             row.update({
+                                "purge_k": k,
                                 "subject": subj,
                                 "ea_ref": ea_ref,
                                 "seed": sd,
@@ -474,7 +480,7 @@ def calibration_curve(
         "paradigm", "subject", "split", "calib_size", "seed", "ea_ref",
         "baseline_auc", "adapted_auc", "delta_auc",
         "n_calib", "n_eval", "calib_pos_rate", "eval_pos_rate",
-        "calib_baseline_frac", "eval_baseline_frac", "n_purged", "status",
+        "calib_baseline_frac", "eval_baseline_frac", "purge_k", "n_purged", "status",
         "fold", "fold_mode", "checkpoint", "checkpoint_val_auc",
         "montage_source", "n_channels", "n_epochs_total", "channels",
     ]
@@ -495,7 +501,7 @@ def calibration_curve(
             mode=os.environ.get("WANDB_MODE", "offline"),
             config={
                 "paradigm": paradigm, "calib_sizes": calib_sizes, "seeds": seeds,
-                "arms": arms, "ea_refs": ea_refs, "purge_k": purge_k,
+                "arms": arms, "ea_refs": ea_refs, "purge_ks": purge_ks,
                 "folds": folds, "fold_mode": fold_mode,
             },
         )
@@ -539,9 +545,10 @@ def main() -> None:
              "only variant achievable at deployment (design.md 11.1, 7.3).",
     )
     parser.add_argument(
-        "--purge-k", type=int, default=5,
+        "--purge-k", nargs="+", type=int, dest="purge_ks", default=[5],
         help="purged_stratified: drop evaluation epochs within +/-k of any "
-             "calibration epoch in chronological order.",
+             "calibration epoch in chronological order. Accepts several values to "
+             "sweep k; only purged_stratified is affected, other arms record 0.",
     )
     parser.add_argument(
         "--folds", nargs="+", default=None,
@@ -576,7 +583,7 @@ def main() -> None:
         seeds=args.seeds,
         arms=args.arms,
         ea_refs=args.ea_refs,
-        purge_k=args.purge_k,
+        purge_ks=args.purge_ks,
         folds=args.folds,
         fold_mode=args.fold_mode,
         strict_montage=args.strict_montage,

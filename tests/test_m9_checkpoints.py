@@ -155,3 +155,30 @@ def test_discover_is_inspection_only(tmp_path, monkeypatch):
     _make_version(tmp_path, "version_2", 0.90)
     monkeypatch.setattr("src.models.checkpoints.n_channels_of", lambda p: 17)
     assert discover_versions(tmp_path, 17) == ["version_1", "version_2"]
+
+
+def test_loso_filters_by_paradigm_channel_count(tmp_path, monkeypatch):
+    """MI and P300 subject IDs are both small integers and WILL collide.
+
+    lightning_logs holds folds from both paradigms. An MI fold whose val subjects
+    include 2 must not be returned when resolving P300 subject 2.
+    """
+    _make_version(tmp_path, "version_34", 0.79, val_subjects=[2])          # P300 fold
+    _make_version(tmp_path, "version_41", 0.76, val_subjects=[2, 7, 12])   # MI fold
+    monkeypatch.setattr(
+        "src.models.checkpoints.n_channels_of",
+        lambda p: 17 if "version_41" in str(p) else 8,
+    )
+    # Unfiltered, this is genuinely ambiguous and must raise rather than guess.
+    with pytest.raises(ValueError, match="multiple folds"):
+        loso_fold_for_subject(tmp_path, 2)
+    # Filtered by paradigm, it resolves to the P300 fold.
+    assert loso_fold_for_subject(tmp_path, 2, n_channels=8).version == "version_34"
+    assert loso_fold_for_subject(tmp_path, 2, n_channels=17).version == "version_41"
+
+
+def test_loso_channel_filter_can_exclude_everything(tmp_path, monkeypatch):
+    _make_version(tmp_path, "version_41", 0.76, val_subjects=[2])
+    monkeypatch.setattr("src.models.checkpoints.n_channels_of", lambda p: 17)
+    with pytest.raises(FileNotFoundError, match="No fold held out subject 2"):
+        loso_fold_for_subject(tmp_path, 2, n_channels=8)

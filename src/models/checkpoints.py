@@ -135,30 +135,47 @@ def load_folds(log_dir: Path | str, versions: list[str], expect_channels: int | 
     return refs
 
 
-def loso_fold_for_subject(log_dir: Path | str, subject: int, strict: bool = True) -> CheckpointRef:
+def loso_fold_for_subject(
+    log_dir: Path | str,
+    subject: int,
+    n_channels: int | None = None,
+    strict: bool = True,
+) -> CheckpointRef:
     """Return the fold whose val_subjects.json contains *subject*.
 
     strict=True (the default, and what §11.2 requires) raises when no fold recorded
     that subject, rather than falling back to a checkpoint that may have trained on
     them. The old fallback to "best checkpoint overall" could silently score a
     subject against a model that had seen them.
+
+    *n_channels* restricts the search to folds of the matching paradigm. Subject IDs
+    are small integers in both PhysionetMI (1-109) and BNCI2014_009 (1-10), so an MI
+    fold's val_subjects.json will collide with P300 subject numbers if the search is
+    not filtered. Pass the paradigm's channel count to disambiguate.
     """
     import json
 
     metas = sorted(Path(log_dir).glob("version_*/val_subjects.json"))
     if not metas:
-        msg = (
+        raise FileNotFoundError(
             f"No val_subjects.json under {log_dir}; LOSO assignment cannot be verified. "
             f"Re-train with evaluation=p300_loso_full."
         )
-        if strict:
-            raise FileNotFoundError(msg)
-        raise FileNotFoundError(msg)  # no non-strict fallback: silently wrong is worse
 
     matches = []
     for meta in metas:
-        if subject in json.loads(meta.read_text()):
-            matches.append(meta.parent.name)
+        if subject not in json.loads(meta.read_text()):
+            continue
+        if n_channels is not None:
+            ckpts = sorted(meta.parent.glob("checkpoints/best-epoch=*/*.ckpt"))
+            if not ckpts:
+                continue
+            try:
+                if n_channels_of(ckpts[0]) != n_channels:
+                    continue  # a fold from the other paradigm
+            except Exception:
+                continue
+        matches.append(meta.parent.name)
 
     if not matches:
         raise FileNotFoundError(
