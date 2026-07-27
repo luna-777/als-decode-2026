@@ -115,11 +115,14 @@ def summarize(rows: list[dict]) -> list[dict]:
     degenerate: dict[tuple, int] = defaultdict(int)
 
     for r in rows:
+        # purge_k is part of the condition, not a nuisance parameter: k=1, 2 and 5
+        # are different leakage controls and must never be pooled.
         key = (
             r.get("paradigm", "?"),
             r.get("split", "stratified"),
             r.get("ea_ref", "session"),
             int(r["calib_size"]),
+            int(r.get("purge_k", 0) or 0),
         )
         if r.get("status", "ok") != "ok":
             degenerate[key] += 1
@@ -138,13 +141,14 @@ def summarize(rows: list[dict]) -> list[dict]:
         n_folds_seen[key].add(len(fold_vals))
 
     out = []
-    for key in sorted(set(per_subject) | set(degenerate), key=lambda k: (k[0], k[1], k[2], k[3])):
-        paradigm, split, ea_ref, size = key
+    for key in sorted(set(per_subject) | set(degenerate), key=lambda k: (k[0], k[1], k[2], k[3], k[4])):
+        paradigm, split, ea_ref, size, pk = key
         subj_map = per_subject.get(key, {})
         if not subj_map:
             out.append({
                 "paradigm": paradigm, "split": split, "ea_ref": ea_ref,
-                "calib_size": size, "n_subjects": 0, "n_seeds": 0, "n_folds": 0,
+                "calib_size": size, "purge_k": pk,
+                "n_subjects": 0, "n_seeds": 0, "n_folds": 0,
                 "mean_delta_auc": "", "median_delta_auc": "", "ci95_lo": "",
                 "ci95_hi": "", "n_improved": 0, "wilcoxon_W": "", "p_two_sided": "",
                 "p_one_sided_greater": "", "cohens_dz": "",
@@ -166,6 +170,7 @@ def summarize(rows: list[dict]) -> list[dict]:
             "split": split,
             "ea_ref": ea_ref,
             "calib_size": size,
+            "purge_k": pk,
             "n_subjects": int(finite.size),
             "n_seeds": int(n_seeds),
             "n_folds": int(n_folds),
@@ -184,7 +189,8 @@ def summarize(rows: list[dict]) -> list[dict]:
 
 
 FIELDS = [
-    "paradigm", "split", "ea_ref", "calib_size", "n_subjects", "n_seeds", "n_folds",
+    "paradigm", "split", "ea_ref", "calib_size", "purge_k",
+    "n_subjects", "n_seeds", "n_folds",
     "mean_delta_auc", "median_delta_auc", "ci95_lo", "ci95_hi", "n_improved",
     "wilcoxon_W", "p_two_sided", "p_one_sided_greater", "cohens_dz", "n_degenerate",
 ]
@@ -201,17 +207,20 @@ def main() -> None:
         raise SystemExit("No rows loaded.")
     summary = summarize(rows)
 
-    hdr = f"{'paradigm':<8} {'split':<22} {'ea':<6} {'N':>5} {'nsub':>5} {'meanΔ':>10} {'95% CI':>20} {'impr':>6} {'p2':>9} {'dz':>7}"
+    hdr = (f"{'paradigm':<6} {'split':<22} {'ea':<12} {'N':>5} {'k':>3} {'nsub':>5} "
+           f"{'meanΔ':>10} {'95% CI':>20} {'impr':>7} {'p2':>9} {'dz':>7} {'deg':>5}")
     print(hdr)
     print("-" * len(hdr))
     for s in summary:
-        ci = f"[{s['ci95_lo']:+.4f},{s['ci95_hi']:+.4f}]"
-        p2 = s["p_two_sided"]
+        num = lambda v, f: (f"{v:{f}}" if isinstance(v, (int, float)) else "—")
+        ci = ("—" if not isinstance(s["ci95_lo"], (int, float))
+              else f"[{s['ci95_lo']:+.4f},{s['ci95_hi']:+.4f}]")
+        impr = ("—" if s["n_subjects"] == 0 else f"{s['n_improved']}/{s['n_subjects']}")
         print(
-            f"{s['paradigm']:<8} {s['split']:<22} {s['ea_ref']:<6} {s['calib_size']:>5} "
-            f"{s['n_subjects']:>5} {s['mean_delta_auc']:>+10.4f} {ci:>20} "
-            f"{s['n_improved']:>3}/{s['n_subjects']:<2} {p2 if p2 == '' else f'{p2:>9.4f}'} "
-            f"{s['cohens_dz']:>+7.3f}"
+            f"{s['paradigm']:<6} {s['split']:<22} {s['ea_ref']:<12} {s['calib_size']:>5} "
+            f"{s['purge_k']:>3} {s['n_subjects']:>5} {num(s['mean_delta_auc'], '+10.4f'):>10} "
+            f"{ci:>20} {impr:>7} {num(s['p_two_sided'], '9.4f'):>9} "
+            f"{num(s['cohens_dz'], '+7.3f'):>7} {s['n_degenerate']:>5}"
         )
 
     if args.out:
