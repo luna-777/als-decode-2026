@@ -16,6 +16,7 @@
 | 0.3 EA provenance of temporal arm | **Hypothesis falsified.** The temporal arm *did* have EA. Not confounded with EA-vs-no-EA. |
 | 0.4 (found during audit) Checkpoint pinning | **FAIL.** Stage 3 selects the MI checkpoint by a mutable filesystem scan. |
 | 0.5 (found during audit) Statistics errors | **FAIL.** Sign error at n=10 and a mislabelled p-value column. |
+| 0.6 Discriminating test on `version_28` | **PASS.** Config montage empirically confirmed; no retraining needed. |
 
 **Bottom line for the paper's authors:** every MI number in
 `experiments/stage3/mi_results*.csv` is dead and must be regenerated. The P300
@@ -338,6 +339,88 @@ Two distinct errors:
 
 `p300_sign_test.csv` was spot-checked and its means agree with
 `p300_results.csv`; it reports 0/10 improving at every size except n=480 (2/10).
+
+---
+
+## 0.6 — Discriminating test: is the config montage the one version_28 was trained on?
+
+`version_28` predates the montage contract, so its electrode order cannot be read
+back from the checkpoint — only *inferred* from the config the training path read.
+The inference is documentary (the config has never been edited); this test makes it
+empirical.
+
+**Method.** `scripts/eval_heldout_mi.py` evaluates the pretrained model on the 10
+held-out MI subjects with **no adaptation**, EA applied as currently implemented,
+scoring all of each subject's epochs. Run twice against the *same* pinned
+checkpoint and preprocessor, with the montage as the only difference:
+
+```bash
+python scripts/eval_heldout_mi.py --folds version_28
+python scripts/eval_heldout_mi.py --folds version_28 \
+    --montage-override FC5 FC3 FC1 FCz FC2 FC4 FC6 C5 C3 C1 Cz C2 C4 C6 CP5 CP3 CP1
+```
+
+**Result.**
+
+| subject | wrong montage | config montage | Δ |
+|---|---|---|---|
+| 99 | 0.6171 | 0.7154 | +0.0983 |
+| 101 | 0.6843 | 0.7171 | +0.0328 |
+| 102 | 0.7508 | 0.9189 | +0.1681 |
+| 103 | 0.7441 | 0.8715 | +0.1273 |
+| 104 | 0.8229 | 0.8759 | +0.0530 |
+| 105 | 0.7931 | 0.8005 | +0.0075 |
+| 106 | 0.7623 | 0.8111 | +0.0488 |
+| 107 | 0.5633 | 0.6605 | +0.0971 |
+| 108 | 0.6941 | 0.6857 | −0.0084 |
+| 109 | 0.6062 | 0.5680 | −0.0382 |
+| **mean** | **0.7038** | **0.7625** | **+0.0586** |
+
+Paired Wilcoxon W=6.0, **p=0.027** two-sided; 8/10 subjects improve; Cohen's
+d_z=+0.914; bootstrap 95% CI on the mean gain **[+0.0225, +0.0977]**.
+
+**Calibration of the comparison.** The wrong-montage control reproduces the
+published figure — 0.7038 here versus 0.6949 in `mi_results.csv`. The small
+residual is expected: the published number is scored on evaluation subsets after
+calibration epochs are removed, whereas this test scores all epochs. That
+agreement confirms the harness reproduces the pre-audit condition, so the +0.0586
+is attributable to the montage and nothing else.
+
+**Against the fold range.** The config-montage mean of 0.7625 falls inside the
+quoted fold validation range 0.715–0.788, and at the lower edge of the EA-era
+sweep's own range (0.7632–0.8016).
+
+> **Verdict: the config montage is empirically confirmed.** Feeding correctly
+> ordered electrodes moves held-out performance materially toward the range the
+> checkpoint achieved on validation data, consistently across subjects.
+> **Proceed against `version_28` without retraining Stage 1/2.**
+
+### 0.6.1 Fold spread — and evidence for item 6
+
+All four EA-era MI folds evaluated under the config montage
+(`mi_heldout_montage_check_allfolds.csv`):
+
+| fold | val AUC | held-out mean |
+|---|---|---|
+| version_27 | 0.7783 | 0.7749 |
+| version_28 | **0.8016** | **0.7625** |
+| version_29 | 0.7951 | 0.7736 |
+| version_30 | 0.7632 | 0.7730 |
+
+Fold-averaged mean **0.7710**; sd of the fold means 0.0057.
+
+Note the ordering: `version_28` has the **highest validation AUC of the four and
+the lowest held-out AUC**. Validation AUC does not rank folds usefully here
+(n=4, so this is indicative rather than significant), which is a direct
+demonstration of why best-of-N selection had to go — the selection criterion
+carried no held-out signal. Fold-averaging is the better estimator and is what
+`--fold-mode average` exists to produce.
+
+Also worth recording: the EA-era sweep contains **four** MI folds
+(`version_27..30`), not five. `configs/evaluation/loso.yaml` specifies
+`n_splits: 5`, and the EA commit message says "Requires retraining Stage 1 (4
+folds)". One fold of the 5-fold split was never retrained after EA. `version_26`
+is the 8-channel Stage 2 P300 retrain, not the missing MI fold.
 
 ---
 

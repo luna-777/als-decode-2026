@@ -1,0 +1,11 @@
+paradigm,subject,fold,checkpoint_val_auc,heldout_auc,n_epochs,n_pos,montage_source,montage_label,n_channels,channels
+mi,99,version_28,0.8016,0.6171296296296297,234,90,inferred_from_config,override,17,FC5|FC3|FC1|FCz|FC2|FC4|FC6|C5|C3|C1|Cz|C2|C4|C6|CP5|CP3|CP1
+mi,101,version_28,0.8016,0.6843364197530865,234,90,inferred_from_config,override,17,FC5|FC3|FC1|FCz|FC2|FC4|FC6|C5|C3|C1|Cz|C2|C4|C6|CP5|CP3|CP1
+mi,102,version_28,0.8016,0.7508487654320988,234,90,inferred_from_config,override,17,FC5|FC3|FC1|FCz|FC2|FC4|FC6|C5|C3|C1|Cz|C2|C4|C6|CP5|CP3|CP1
+mi,103,version_28,0.8016,0.7441358024691358,234,90,inferred_from_config,override,17,FC5|FC3|FC1|FCz|FC2|FC4|FC6|C5|C3|C1|Cz|C2|C4|C6|CP5|CP3|CP1
+mi,104,version_28,0.8016,0.8229033290653008,230,88,inferred_from_config,override,17,FC5|FC3|FC1|FCz|FC2|FC4|FC6|C5|C3|C1|Cz|C2|C4|C6|CP5|CP3|CP1
+mi,105,version_28,0.8016,0.7930555555555555,234,90,inferred_from_config,override,17,FC5|FC3|FC1|FCz|FC2|FC4|FC6|C5|C3|C1|Cz|C2|C4|C6|CP5|CP3|CP1
+mi,106,version_28,0.8016,0.7622685185185184,234,90,inferred_from_config,override,17,FC5|FC3|FC1|FCz|FC2|FC4|FC6|C5|C3|C1|Cz|C2|C4|C6|CP5|CP3|CP1
+mi,107,version_28,0.8016,0.5633487654320988,234,90,inferred_from_config,override,17,FC5|FC3|FC1|FCz|FC2|FC4|FC6|C5|C3|C1|Cz|C2|C4|C6|CP5|CP3|CP1
+mi,108,version_28,0.8016,0.6941358024691358,234,90,inferred_from_config,override,17,FC5|FC3|FC1|FCz|FC2|FC4|FC6|C5|C3|C1|Cz|C2|C4|C6|CP5|CP3|CP1
+mi,109,version_28,0.8016,0.606172839506173,234,90,inferred_from_config,override,17,FC5|FC3|FC1|FCz|FC2|FC4|FC6|C5|C3|C1|Cz|C2|C4|C6|CP5|CP3|CP1
