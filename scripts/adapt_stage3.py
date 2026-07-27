@@ -3,17 +3,28 @@
 Protocol
 --------
 For each held-out test subject:
-  1. Apply the cross-subject preprocessor (fit on training data, loaded from checkpoint).
-  2. Take the first N epochs as the calibration set; the rest as the evaluation set.
-  3. Clone the pre-trained model, freeze the backbone, re-initialise the head.
-  4. Train only the head on the calibration set.
-  5. Report AUC (and character accuracy for P300) vs calibration size.
+  1. Load epochs with the montage read from configs/dataset/*.yaml — the same
+     config the training path uses — and assert it matches the montage recorded
+     for the checkpoint.
+  2. Apply the cross-subject preprocessor (fit on training data, loaded from
+     the fold's preprocessor.pkl).
+  3. Draw the calibration set with a stratified random split
+     (train_test_split(train_size=N, stratify=y, random_state=seed)); the rest is
+     the evaluation set. Note: the module docstring previously described a
+     "first N epochs" temporal split, which the code has not done since bf23ef9.
+  4. Clone the pre-trained model, freeze the backbone, keep the pretrained head.
+  5. Train only the head on the calibration set.
+  6. Report AUC vs calibration size, with the checkpoint and montage recorded in
+     every output row.
+
+Checkpoints are named explicitly. There is no best-of-N discovery; see
+docs/AUDIT.md §0.4.
 
 Usage
 -----
-    python scripts/adapt_stage3.py --paradigm mi
+    python scripts/adapt_stage3.py --paradigm mi --folds version_28
+    python scripts/adapt_stage3.py --paradigm mi --folds version_27 version_28 version_29 version_30 --fold-mode average
     python scripts/adapt_stage3.py --paradigm p300
-    python scripts/adapt_stage3.py --paradigm mi --log-dir lightning_logs --calib-sizes 10 20 50 100
 """
 from __future__ import annotations
 
@@ -36,111 +47,34 @@ sys.path.insert(0, str(ROOT))
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-# Checkpoint detection key
-_STAGE2_KEY = "model.backbone.net.conv_spatial.parametrizations.weight.original"
-
-
-# ---------------------------------------------------------------------------
-# Checkpoint discovery
-# ---------------------------------------------------------------------------
-
-def _n_channels_from_ckpt(path: str) -> int:
-    try:
-        sd = torch.load(path, map_location="cpu")["state_dict"]
-        return int(sd[_STAGE2_KEY].shape[2])
-    except Exception:
-        return -1
-
-
-def _val_auc_from_path(path: str) -> float:
-    try:
-        return float(Path(path).stem.split("=")[-1])
-    except Exception:
-        return 0.0
-
-
-def _find_best_checkpoint(log_dir: str, paradigm: str) -> Path:
-    """Return the fold checkpoint with highest val AUC for the given paradigm."""
-    target_ch = 8 if paradigm == "p300" else 17
-    pattern = str(Path(log_dir) / "version_*" / "checkpoints" / "best-epoch=*" / "*.ckpt")
-    ckpts = sorted(glob.glob(pattern))
-    candidates = [
-        c for c in ckpts
-        if _n_channels_from_ckpt(c) == target_ch
-        and _val_auc_from_path(c) > 0.55
-        and (Path(c).parents[2] / "preprocessor.pkl").exists()
-    ]
-    if not candidates:
-        raise FileNotFoundError(f"No {paradigm} checkpoints found in {log_dir}")
-    best = max(candidates, key=_val_auc_from_path)
-    log.info("Using checkpoint: %s (val AUC=%.4f)", best, _val_auc_from_path(best))
-    return Path(best)
-
-
-def _find_checkpoint_for_subject(log_dir: str, paradigm: str, subject: int) -> Path:
-    """LOSO lookup: find the checkpoint trained without *subject* in the val fold.
-
-    Requires val_subjects.json written by train.py beside each version's
-    preprocessor.pkl. Falls back to _find_best_checkpoint if no metadata exists
-    (e.g. old checkpoints trained before this feature was added).
-    """
-    import json
-
-    target_ch = 8 if paradigm == "p300" else 17
-    meta_pattern = str(Path(log_dir) / "version_*" / "val_subjects.json")
-    meta_files = sorted(glob.glob(meta_pattern))
-
-    if not meta_files:
-        log.warning(
-            "No val_subjects.json found in %s — falling back to best checkpoint. "
-            "Re-train with the p300_loso_full evaluation config for proper LOSO.",
-            log_dir,
-        )
-        return _find_best_checkpoint(log_dir, paradigm)
-
-    for meta_path in meta_files:
-        val_subjs = json.loads(Path(meta_path).read_text())
-        if subject not in val_subjs:
-            continue
-        version_dir = Path(meta_path).parent
-        ckpt_candidates = [
-            c for c in version_dir.glob("checkpoints/best-epoch=*/*.ckpt")
-            if _n_channels_from_ckpt(str(c)) == target_ch
-            and (version_dir / "preprocessor.pkl").exists()
-        ]
-        if not ckpt_candidates:
-            continue
-        best = max(ckpt_candidates, key=lambda p: _val_auc_from_path(str(p)))
-        log.info(
-            "Subject %s: using checkpoint %s (val AUC=%.4f)",
-            subject, best, _val_auc_from_path(str(best)),
-        )
-        return best
-
-    raise FileNotFoundError(
-        f"No checkpoint found where subject {subject} was the val fold in {log_dir}. "
-        f"Run: python -m src.train dataset=bnci_009 stage=stage2 "
-        f"evaluation=p300_loso_full fold=<0-9>"
-    )
+# Checkpoint discovery has moved to src/models/checkpoints.py, which requires folds
+# to be named explicitly. The previous _find_best_checkpoint() ranked whatever was on
+# disk by the val AUC in the filename; see docs/AUDIT.md §0.4 for why that made every
+# MI result a function of the state of lightning_logs/ at run time.
 
 
 # ---------------------------------------------------------------------------
 # Model loading + head reset
 # ---------------------------------------------------------------------------
 
-def _load_model_frozen(ckpt_path: Path, paradigm: str, reinit_head: bool = True) -> nn.Module:
+def _load_model_frozen(
+    ckpt_path: Path,
+    paradigm: str,
+    n_channels: int,
+    n_times: int,
+    reinit_head: bool = True,
+) -> nn.Module:
     """Load checkpoint, freeze backbone. Re-initialises head only when reinit_head=True.
 
     reinit_head=False → pretrained head intact (baseline and warm-start adapted path).
     reinit_head=True  → fresh random head (cold-start ablation only).
+
+    n_channels/n_times come from the dataset config, not from literals — the two
+    hardcoded shape tables this function used to carry were a second place for the
+    montage to drift out of sync with training (docs/AUDIT.md §0.1).
     """
     from src.models.backbone import BackboneEncoder, DecoderHead, EEGDecoder
     from src.training.lit_module import LitEEG
-
-    if paradigm == "p300":
-        n_channels, n_times = 8, 102
-    else:
-        n_channels, n_times = 17, 320
 
     backbone = BackboneEncoder(n_channels=n_channels, n_times=n_times)
     head = DecoderHead(feature_dim=backbone.feature_dim, n_classes=1)
@@ -176,7 +110,7 @@ def _adapt_head(
     X_calib: np.ndarray,
     y_calib: np.ndarray,
     n_epochs: int = 100,
-    lr: float = 1e-2,
+    lr: float = 1e-3,
     batch_size: int = 32,
 ) -> nn.Module:
     """Train only the decoder head on calibration data. Mutates and returns model."""
@@ -232,43 +166,37 @@ def calibration_curve(
     n_adapt_epochs: int = 100,
     adapt_lr: float = 1e-3,
     seed: int = 42,
+    folds: list[str] | None = None,
+    fold_mode: str = "pinned",
+    strict_montage: bool = False,
 ) -> list[dict]:
-    from src.datasets.registry import DatasetSpec, get_dataset
+    from src.datasets.montage import assert_montage_matches, load_montage
+    from src.datasets.registry import get_dataset
+    from src.models.checkpoints import load_folds, loso_fold_for_subject, spec_from_config
 
-    if paradigm == "p300":
-        if calib_sizes is None:
-            calib_sizes = [24, 48, 96, 240, 480]   # 0.5/1/2/5/10 characters × 48 epochs
-        spec = DatasetSpec(
-            moabb_name="BNCI2014_009", paradigm="p300",
-            channels=["Fz", "Cz", "Pz", "Oz", "P3", "P4", "PO7", "PO8"],
-            sfreq_target=128.0, exclude_subjects=[],
-            band=(1.0, 24.0), epoch_window=(0.0, 0.8),
-            euclidean_alignment=True,
-        )
-    else:
-        if calib_sizes is None:
-            calib_sizes = [10, 20, 50, 100, 200]
-        spec = DatasetSpec(
-            moabb_name="PhysionetMI", paradigm="mi",
-            channels=[
-                "FC5", "FC3", "FC1", "FCz", "FC2", "FC4", "FC6",
-                "C5", "C3", "C1", "Cz", "C2", "C4", "C6",
-                "CP5", "CP3", "CP1",
-            ],
-            sfreq_target=160.0, exclude_subjects=[88, 92, 100],
-            band=(8.0, 30.0), epoch_window=(0.0, 2.0),
-            euclidean_alignment=True,
-        )
+    # Channel list, sfreq, band and window all come from the same config the training
+    # path reads (configs/dataset/*.yaml). No second copy lives here.
+    spec = spec_from_config(paradigm)
+    n_times = int(round(spec.sfreq_target * (spec.epoch_window[1] - spec.epoch_window[0])))
+    n_channels = len(spec.channels)
+    log.info("Montage from config: %d channels %s", n_channels, list(spec.channels))
+
+    if calib_sizes is None:
+        calib_sizes = [24, 48, 96, 240, 480] if paradigm == "p300" else [10, 20, 50, 100, 200]
 
     wrapper = get_dataset(spec)
     test_subjects = wrapper.subject_list[-10:]
     log.info("Test subjects for Stage 3: %s", test_subjects)
 
-    # For MI, one best checkpoint covers all test subjects (they were never in training).
-    # For P300 LOSO-10, each subject needs the fold checkpoint that held them out.
-    _mi_ckpt = None
+    # Folds are named explicitly; nothing is selected by ranking (docs/AUDIT.md §0.4).
+    mi_folds = None
     if paradigm != "p300":
-        _mi_ckpt = _find_best_checkpoint(log_dir, paradigm)
+        mi_folds = load_folds(log_dir, folds or [], expect_channels=n_channels)
+        if fold_mode == "pinned" and len(mi_folds) != 1:
+            raise ValueError(
+                f"fold_mode='pinned' needs exactly one --folds entry, got {len(mi_folds)}. "
+                f"Use --fold-mode average to aggregate across folds."
+            )
 
     results: list[dict] = []
 
@@ -276,67 +204,90 @@ def calibration_curve(
         log.info("Subject %s — loading epochs…", subj)
 
         if paradigm == "p300":
-            ckpt_path = _find_checkpoint_for_subject(log_dir, paradigm, subj)
+            subj_folds = [loso_fold_for_subject(log_dir, subj, strict=True)]
         else:
-            ckpt_path = _mi_ckpt
+            subj_folds = mi_folds
 
-        pp_path = ckpt_path.parents[2] / "preprocessor.pkl"
-        with open(pp_path, "rb") as f:
-            pp = pickle.load(f)
-        log.info("Preprocessor: %s", pp_path)
+        X_raw, y_all, meta = wrapper.load_epochs([subj])
 
-        X_all, y_all, _ = wrapper.load_epochs([subj])
-        X_all = pp.transform(X_all)
-
-        for n_calib in calib_sizes:
-            if n_calib >= len(X_all) - 10:
-                log.warning("  Skipping calib_size=%d (too large for subject %s)", n_calib, subj)
-                continue
-
-            from sklearn.model_selection import train_test_split
-            X_calib, X_eval, y_calib, y_eval = train_test_split(
-                X_all, y_all, train_size=n_calib, random_state=seed, stratify=y_all
+        for ref in subj_folds:
+            # The montage contract: what this checkpoint was trained on must equal
+            # what we just loaded, name for name and position for position.
+            montage = load_montage(ref.version_dir, spec, n_times, strict=strict_montage)
+            assert_montage_matches(
+                montage,
+                meta["channels"],
+                where=f"{ref.version} vs {paradigm} data for subject {subj}",
             )
 
-            if len(np.unique(y_eval)) < 2:
-                log.warning("  Skipping calib_size=%d (eval set has only one class)", n_calib)
-                continue
+            with open(ref.preprocessor_path, "rb") as f:
+                pp = pickle.load(f)
+            X_all = pp.transform(X_raw)
 
-            # Baseline: pretrained head (no re-init) on the same eval split.
-            # Must be computed here, not before the loop, so it shares the eval
-            # denominator with the adapted model.
-            model_base = _load_model_frozen(ckpt_path, paradigm, reinit_head=False)
-            model_base.eval()
-            baseline_auc = _epoch_auc(model_base, X_eval, y_eval)
+            for n_calib in calib_sizes:
+                if n_calib >= len(X_all) - 10:
+                    log.warning("  Skipping calib_size=%d (too large for subject %s)", n_calib, subj)
+                    continue
 
-            # Adapted: pretrained head fine-tuned on calib (warm-start), evaluated
-            # on the same eval split. Keeping pretrained weights avoids having to
-            # relearn the linear map from a handful of calibration samples.
-            model_adapted = _load_model_frozen(ckpt_path, paradigm, reinit_head=False)
-            _adapt_head(model_adapted, X_calib, y_calib,
-                        n_epochs=n_adapt_epochs, lr=adapt_lr)
-            adapted_auc = _epoch_auc(model_adapted, X_eval, y_eval)
+                from sklearn.model_selection import train_test_split
+                X_calib, X_eval, y_calib, y_eval = train_test_split(
+                    X_all, y_all, train_size=n_calib, random_state=seed, stratify=y_all
+                )
 
-            delta_auc = adapted_auc - baseline_auc
-            log.info(
-                "  Subject %s | calib=%3d | baseline=%.3f | adapted=%.3f (Δ=%+.3f)",
-                subj, n_calib, baseline_auc, adapted_auc, delta_auc,
-            )
-            results.append({
-                "subject": subj,
-                "calib_size": n_calib,
-                "baseline_auc": baseline_auc,
-                "adapted_auc": adapted_auc,
-                "delta_auc": delta_auc,
-                "seed": seed,
-            })
+                if len(np.unique(y_eval)) < 2:
+                    log.warning("  Skipping calib_size=%d (eval set has only one class)", n_calib)
+                    continue
+
+                # Baseline: pretrained head (no re-init) on the same eval split.
+                # Must be computed here, not before the loop, so it shares the eval
+                # denominator with the adapted model.
+                model_base = _load_model_frozen(
+                    ref.ckpt_path, paradigm, n_channels, n_times, reinit_head=False
+                )
+                model_base.eval()
+                baseline_auc = _epoch_auc(model_base, X_eval, y_eval)
+
+                # Adapted: pretrained head fine-tuned on calib (warm-start), evaluated
+                # on the same eval split. Keeping pretrained weights avoids having to
+                # relearn the linear map from a handful of calibration samples.
+                model_adapted = _load_model_frozen(
+                    ref.ckpt_path, paradigm, n_channels, n_times, reinit_head=False
+                )
+                _adapt_head(model_adapted, X_calib, y_calib,
+                            n_epochs=n_adapt_epochs, lr=adapt_lr)
+                adapted_auc = _epoch_auc(model_adapted, X_eval, y_eval)
+
+                delta_auc = adapted_auc - baseline_auc
+                log.info(
+                    "  Subject %s | %s | calib=%3d | baseline=%.3f | adapted=%.3f (Δ=%+.3f)",
+                    subj, ref.version, n_calib, baseline_auc, adapted_auc, delta_auc,
+                )
+                results.append({
+                    "subject": subj,
+                    "calib_size": n_calib,
+                    "baseline_auc": baseline_auc,
+                    "adapted_auc": adapted_auc,
+                    "delta_auc": delta_auc,
+                    "seed": seed,
+                    "fold": ref.version,
+                    "fold_mode": fold_mode,
+                    "checkpoint": str(ref.ckpt_path),
+                    "checkpoint_val_auc": ref.val_auc,
+                    "montage_source": montage.source,
+                    "n_channels": n_channels,
+                    "channels": "|".join(spec.channels),
+                })
 
     # Persist results so they can be re-read without re-running
     import csv
     out_dir = Path("experiments") / "stage3"
     out_dir.mkdir(parents=True, exist_ok=True)
     csv_path = out_dir / f"{paradigm}_results.csv"
-    fieldnames = ["paradigm", "subject", "calib_size", "baseline_auc", "adapted_auc", "delta_auc", "seed"]
+    fieldnames = [
+        "paradigm", "subject", "calib_size", "baseline_auc", "adapted_auc", "delta_auc",
+        "seed", "fold", "fold_mode", "checkpoint", "checkpoint_val_auc",
+        "montage_source", "n_channels", "channels",
+    ]
     with open(csv_path, "w", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
@@ -374,6 +325,22 @@ def main() -> None:
     parser.add_argument("--calib-sizes", nargs="+", type=int, default=None)
     parser.add_argument("--adapt-epochs", type=int, default=100)
     parser.add_argument("--adapt-lr", type=float, default=1e-3)
+    parser.add_argument(
+        "--folds", nargs="+", default=None,
+        help="Explicit MI fold version dirs, e.g. --folds version_28. Required for "
+             "--paradigm mi; P300 resolves folds per subject from val_subjects.json.",
+    )
+    parser.add_argument(
+        "--fold-mode", choices=["pinned", "average"], default="pinned",
+        help="pinned: exactly one fold, recorded in every row. average: score every "
+             "named fold and aggregate downstream. Best-of-N selection is not offered — "
+             "it is selection optimism in the baseline (docs/AUDIT.md §0.4).",
+    )
+    parser.add_argument(
+        "--strict-montage", action="store_true",
+        help="Refuse checkpoints that carry no recorded montage.json instead of "
+             "inferring the montage from the training config.",
+    )
     args = parser.parse_args()
 
     results = calibration_curve(
@@ -382,6 +349,9 @@ def main() -> None:
         calib_sizes=args.calib_sizes,
         n_adapt_epochs=args.adapt_epochs,
         adapt_lr=args.adapt_lr,
+        folds=args.folds,
+        fold_mode=args.fold_mode,
+        strict_montage=args.strict_montage,
     )
 
     paradigm_label = "MI (Stage 1)" if args.paradigm == "mi" else "P300 (Stage 2)"

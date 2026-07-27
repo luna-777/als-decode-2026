@@ -123,3 +123,110 @@ added here during implementation as new non-obvious choices arise.
 **Rationale:** `PhysionetMI.get_data()` returns only the 6 imagined-movement task runs; it never loads runs 1–2 into the returned dict. §5.2 explicitly requires baseline runs in the idle class ("it teaches the detector that quiet, non-task EEG is not control"). The two alternative paths were (a) call `mne.io.read_raw_edf()` directly on the cached EDF paths — explicitly forbidden by the hard constraint "never parse raw .edf files directly" — or (b) drop baseline runs entirely and use only T0 rest from task runs. The user selected this path over option (b) to preserve the §5.2 data construction spec. `_load_one_run` is MOABB's own EDF-reading helper (the actual `read_raw_edf` call is inside MOABB code, not ours), and the dependency is isolated entirely to `MoabbDatasetWrapper._epoch_baseline_run`, so a future MOABB API change requires touching one place.
 
 **Rejected:** (a) direct `mne.io.read_raw_edf` on cached paths — violates ADR-6's constraint; (b) idle = T0 rest only — deviates from §5.2.
+
+---
+
+## ADR-13 — Stage 3 reads its montage from the training config, never a local copy
+
+**Decision:** `scripts/adapt_stage3.py` builds its `DatasetSpec` via
+`src.models.checkpoints.spec_from_config()`, which loads `configs/dataset/*.yaml`
+through the same `build_spec_from_cfg` the training path uses. The hardcoded
+17-channel MI list and the hardcoded `(n_channels, n_times)` shape tables are
+deleted.
+
+**Rationale:** The script's private copy of the channel list diverged from the
+config on the very first commit that introduced it and never agreed with it
+afterwards (docs/AUDIT.md §0.1). Both lists were length 17, so the checkpoint
+loaded without a shape error while zero of the 17 array positions matched — every
+learned spatial filter was applied to the wrong electrode. A second copy of a
+value that must agree with the training path is a defect regardless of whether it
+currently happens to match.
+
+**Rejected:** Keeping the local list and adding a test that compares it to the
+config — a test can be updated in the same commit that breaks the invariant. One
+source removes the failure mode instead of detecting it.
+
+---
+
+## ADR-14 — The montage is recorded in the checkpoint bundle and asserted at load
+
+**Decision:** `MontageCheckpoint` writes `montage.json` (channel names in array
+order, sfreq, n_times, paradigm) beside each Lightning version directory.
+`src/datasets/montage.py::assert_montage_matches` raises `ValueError` — listing
+both lists and every disagreeing position — unless the loaded data matches
+exactly, in order. Checkpoints predating this file report
+`montage_source="inferred_from_config"`; `--strict-montage` refuses them.
+
+**Rationale:** Implements ADR-10, which was specified but never enforced in code.
+Equal-length-different-order is the dangerous case precisely because it produces
+no shape error, so it must be checked explicitly rather than left to tensor
+shapes. Recording provenance for legacy checkpoints keeps the inference visible in
+the output rather than silent.
+
+**Rejected:** Reindexing the loaded data to the checkpoint's order — ADR-10
+forbids it; a montage disagreement means the experiment was misconfigured, and
+silently repairing it hides that.
+
+---
+
+## ADR-15 — P300 channels are selected by name from what MOABB returns
+
+**Decision:** `BnciP300Wrapper.load_epochs` calls
+`P300.get_data(..., return_epochs=True)` and resolves `spec.channels` by name
+against `epochs.ch_names`, raising if any requested electrode is absent.
+
+**Rationale:** BNCI2014_009 returns **16** EEG channels, not 8 as the previous
+comment claimed (docs/AUDIT.md §0.2). The old code built a position map from an
+8-name list and sliced positions 0–7 of the 16. That selected the intended
+electrodes only because MOABB happens to return the ALS-compatible subset first.
+`docs/design.md` §4.2 documents a *different* 16-channel order; had the
+documentation been correct, the slice would have taken the wrong montage and
+every P300 result would have been invalid. Correctness must not rest on an
+undocumented ordering coincidence.
+
+**Rejected:** Asserting the 16-channel order matches a hardcoded expectation —
+still couples the code to an ordering it does not control; by-name lookup does not
+care about order at all.
+
+---
+
+## ADR-16 — Stage 3 folds are named explicitly; no best-of-N selection
+
+**Decision:** `_find_best_checkpoint` is removed. `--folds` names the fold(s)
+explicitly and `--fold-mode {pinned,average}` chooses between one recorded fold
+and aggregation across folds. The LOSO lookup raises when no fold held a subject
+out, instead of falling back to the best checkpoint. Every output row records
+`fold`, `checkpoint`, `checkpoint_val_auc`, `montage_source`, `n_channels`, and
+`channels`.
+
+**Rationale:** Two separate problems. (a) *Reproducibility:* selection by "highest
+val AUC found on disk" made every result a function of the state of
+`lightning_logs/` at run time; a discarded run silently paired EA-transformed data
+with a pre-EA checkpoint and nothing in the output revealed it (docs/AUDIT.md
+§0.4). (b) *Selection optimism:* taking the best of N folds and applying it to
+every held-out subject selects the backbone on validation performance and then
+reports the baseline as if it were arbitrary, biasing ΔAUC downward by inflating
+the baseline. Averaging across folds or pinning one fold are both defensible;
+best-of-N is not.
+
+**Rejected:** Keeping best-of-N with the choice merely logged — recording a biased
+estimator does not debias it.
+
+---
+
+## ADR-17 — One independently computed p-value per alternative
+
+**Decision:** `scripts/analyze_stage3.py` obtains `p_two_sided` and
+`p_one_sided_greater` from separate `scipy.stats.wilcoxon` calls with explicit
+`alternative=`. Neither is derived from the other. Multi-seed runs are collapsed to
+a per-subject mean before testing.
+
+**Rationale:** The previous ad-hoc table doubled a one-sided p to produce a
+"two-sided" p that was already two-sided, publishing 0.0077 for a result whose
+two-sided p is 0.0039, and dropped the sign of the n=10 mean (docs/AUDIT.md §0.5).
+Deriving one p from another by a factor of two is only valid for symmetric
+continuous nulls and is never necessary when the library computes both. Treating
+seeds as independent samples would inflate n by the seed count.
+
+**Rejected:** Reporting one-sided p as the headline — the direction of the effect
+was not pre-registered, and a one-sided test is not justified post hoc.

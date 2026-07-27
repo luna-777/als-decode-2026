@@ -108,6 +108,9 @@ class MoabbDatasetWrapper:
             "channels": ch_names,
             "sfreq": sfreq,
             "n_times": n_times,
+            # mne.Raw.pick() preserves the requested order, so the array axis order is
+            # exactly ch_names. Recorded so the montage contract can be checked.
+            "source_channels": ch_names,
         }
         return X, y, meta
 
@@ -189,9 +192,19 @@ def _epoch_baseline_run(
 # Stage 2 — BNCI2014_009 P300 wrapper
 # ---------------------------------------------------------------------------
 
-# Native channel order for BNCI2014_009 (all 8 electrodes, dataset-defined order).
-# Documented in the BNCI Horizon 2020 dataset paper; MOABB returns them in this order.
-_BNCI009_CHANNELS: list[str] = ["Fz", "Cz", "Pz", "Oz", "P3", "P4", "PO7", "PO8"]
+# BNCI2014_009 returns 16 EEG channels, not 8. Verified against MOABB 1.5.0 for all
+# 10 subjects (docs/AUDIT.md §0.2):
+#   Fz Cz Pz Oz P3 P4 PO7 PO8 F3 F4 FCz C3 C4 CP3 CPz CP4
+# The 8-channel ALS-compatible subset happens to occupy positions 0-7, so the previous
+# hardcoded position map selected the right electrodes — by coincidence, not by
+# construction. Channels are now resolved by name from what MOABB actually returns, so
+# a MOABB reordering surfaces as an error rather than a silently wrong montage.
+# (docs/design.md §4.2 lists a different 16-channel order; that documented order is
+# wrong — see docs/AUDIT.md §0.2.)
+_BNCI009_EXPECTED_16: list[str] = [
+    "Fz", "Cz", "Pz", "Oz", "P3", "P4", "PO7", "PO8",
+    "F3", "F4", "FCz", "C3", "C4", "CP3", "CPz", "CP4",
+]
 
 
 class BnciP300Wrapper:
@@ -242,16 +255,16 @@ class BnciP300Wrapper:
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            X, y_str, meta_df = paradigm.get_data(
+            epochs, y_str, meta_df = paradigm.get_data(
                 dataset=self._moabb_ds,
                 subjects=list(subjects),
+                return_epochs=True,
             )
+            returned_channels = list(epochs.ch_names)
+            X = epochs.get_data()
 
-        # X: (n_epochs, n_channels, n_times) with channels in _BNCI009_CHANNELS order.
-        # Select and reorder to match spec.channels.
-        ch_to_idx = {ch: i for i, ch in enumerate(_BNCI009_CHANNELS)}
-        ch_idx = [ch_to_idx[ch] for ch in self.spec.channels]
-        X = X[:, ch_idx, :]
+        # Resolve the requested montage by NAME against what MOABB actually returned.
+        X = _select_channels_by_name(X, returned_channels, list(self.spec.channels))
 
         y = (y_str == "Target").astype(np.int64)
         X = X.astype(np.float32)
@@ -269,5 +282,28 @@ class BnciP300Wrapper:
             "channels": list(self.spec.channels),
             "sfreq": self.spec.sfreq_target,
             "n_times": X.shape[-1],
+            "source_channels": returned_channels,
         }
         return X, y, meta
+
+
+def _select_channels_by_name(
+    X: np.ndarray, returned: list[str], requested: list[str]
+) -> np.ndarray:
+    """Select *requested* channels out of *X* by name, preserving requested order.
+
+    Raises if any requested name is absent from what the dataset returned, so a
+    montage change upstream surfaces as an error rather than a wrong slice.
+    """
+    missing = [c for c in requested if c not in returned]
+    if missing:
+        raise ValueError(
+            f"Requested channels {missing} are not present in the data returned by "
+            f"MOABB. Returned {len(returned)} channels: {returned}. "
+            f"Requested {len(requested)}: {requested}."
+        )
+    dupes = [c for c in set(returned) if returned.count(c) > 1]
+    if dupes:
+        raise ValueError(f"Dataset returned duplicate channel names: {sorted(dupes)}")
+    idx = [returned.index(c) for c in requested]
+    return X[:, idx, :]

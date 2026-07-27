@@ -30,6 +30,25 @@ class PreprocessorCheckpoint(pl.Callback):
         pl_module.print(f"Preprocessor saved → {save_path}")
 
 
+class MontageCheckpoint(pl.Callback):
+    """Records the electrode montage (names *and* order) to <log_dir>/montage.json.
+
+    ADR-10: the montage is part of the checkpoint's identity. Stage 3 asserts the
+    data it loads matches this file before using the checkpoint. See
+    src/datasets/montage.py.
+    """
+
+    def __init__(self, spec, n_times: int) -> None:
+        self._spec = spec
+        self._n_times = int(n_times)
+
+    def on_train_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        from src.datasets.montage import write_montage
+
+        path = write_montage(Path(trainer.log_dir), self._spec, self._n_times)
+        pl_module.print(f"Montage saved → {path} ({len(self._spec.channels)} ch)")
+
+
 def build_callbacks(cfg) -> list[pl.Callback]:
     """Return the standard callback stack from config.
 

@@ -27,16 +27,39 @@ def _make_spec(channels=None, exclude_subjects=None):
     )
 
 
-def _make_moabb_p300_output(n_epochs=100, n_channels=8, n_times=102, n_targets=17):
-    """Synthetic output matching moabb.paradigms.P300.get_data() format."""
+# BNCI2014_009 returns 16 EEG channels, verified against MOABB 1.5.0 for all 10
+# subjects (docs/AUDIT.md §0.2). The 8 ALS-compatible electrodes occupy positions
+# 0-7, so a positional slice coincides with the correct answer — the mock uses the
+# real 16-channel montage so that coincidence cannot hide a regression.
+BNCI009_RETURNED_CHANNELS = [
+    "Fz", "Cz", "Pz", "Oz", "P3", "P4", "PO7", "PO8",
+    "F3", "F4", "FCz", "C3", "C4", "CP3", "CPz", "CP4",
+]
+
+
+class _FakeEpochs:
+    """Stands in for the mne.Epochs that P300.get_data(return_epochs=True) returns."""
+
+    def __init__(self, data, ch_names):
+        self._data = data
+        self.ch_names = list(ch_names)
+
+    def get_data(self):
+        return self._data
+
+
+def _make_moabb_p300_output(n_epochs=100, n_times=102, n_targets=17,
+                            ch_names=None):
+    """Synthetic output matching P300.get_data(..., return_epochs=True) format."""
     import pandas as pd
 
-    X = np.random.randn(n_epochs, n_channels, n_times).astype(np.float32)
+    ch_names = list(ch_names or BNCI009_RETURNED_CHANNELS)
+    X = np.random.randn(n_epochs, len(ch_names), n_times).astype(np.float32)
     y_str = np.array(
         ["Target"] * n_targets + ["NonTarget"] * (n_epochs - n_targets)
     )
     meta_df = pd.DataFrame({"subject": np.ones(n_epochs, dtype=int)})
-    return X, y_str, meta_df
+    return _FakeEpochs(X, ch_names), y_str, meta_df
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +167,8 @@ class TestBnciP300Wrapper:
 
         assert X.ndim == 3
         assert X.shape[0] == 100
-        assert X.shape[1] == 8  # all 8 channels
+        # 8 requested out of the 16 the dataset actually returns
+        assert X.shape[1] == 8
         assert X.shape[2] == 102
 
     def test_load_epochs_dtype(self):
@@ -188,23 +212,23 @@ class TestBnciP300Wrapper:
         assert unique.issubset({0, 1})
 
     def test_channel_selection_reorders(self):
-        """Requesting a subset of channels returns the correct columns."""
+        """Requesting a subset of channels returns the correct columns, by name."""
         subset = ["Cz", "Pz"]
         wrapper = self._make_wrapper(channels=subset)
 
-        # Full 8-channel data with distinctive values per channel
-        X_mock = np.zeros((10, 8, 102), dtype=np.float32)
-        for i in range(8):
-            X_mock[:, i, :] = i  # channel i has value i
+        # Full 16-channel data with distinctive values per channel
+        data = np.zeros((10, 16, 102), dtype=np.float32)
+        for i in range(16):
+            data[:, i, :] = i  # channel i has value i
         _, y_str, meta_df = _make_moabb_p300_output(n_epochs=10)
         y_str[:] = "NonTarget"
+        X_mock = _FakeEpochs(data, BNCI009_RETURNED_CHANNELS)
 
         mock_paradigm = MagicMock()
         mock_paradigm.get_data.return_value = (X_mock, y_str, meta_df)
 
-        from src.datasets.wrapper import _BNCI009_CHANNELS
-        cz_idx = _BNCI009_CHANNELS.index("Cz")  # = 1
-        pz_idx = _BNCI009_CHANNELS.index("Pz")  # = 2
+        cz_idx = BNCI009_RETURNED_CHANNELS.index("Cz")  # = 1
+        pz_idx = BNCI009_RETURNED_CHANNELS.index("Pz")  # = 2
 
         with patch("moabb.paradigms.P300", return_value=mock_paradigm):
             X, _, _ = wrapper.load_epochs([1])
@@ -212,6 +236,39 @@ class TestBnciP300Wrapper:
         assert X.shape[1] == 2
         np.testing.assert_allclose(X[:, 0, :], cz_idx)  # first output = Cz
         np.testing.assert_allclose(X[:, 1, :], pz_idx)  # second output = Pz
+
+    def test_selection_survives_upstream_reordering(self):
+        """A MOABB reordering must not silently change which electrodes are used."""
+        wrapper = self._make_wrapper(channels=["Fz", "Pz"])
+
+        reordered = BNCI009_RETURNED_CHANNELS[8:] + BNCI009_RETURNED_CHANNELS[:8]
+        data = np.zeros((5, 16, 102), dtype=np.float32)
+        for i, ch in enumerate(reordered):
+            # value encodes the electrode identity, not its position
+            data[:, i, :] = BNCI009_RETURNED_CHANNELS.index(ch)
+        _, y_str, meta_df = _make_moabb_p300_output(n_epochs=5)
+        y_str[:] = "NonTarget"
+
+        mock_paradigm = MagicMock()
+        mock_paradigm.get_data.return_value = (_FakeEpochs(data, reordered), y_str, meta_df)
+
+        with patch("moabb.paradigms.P300", return_value=mock_paradigm):
+            X, _, _ = wrapper.load_epochs([1])
+
+        np.testing.assert_allclose(X[:, 0, :], BNCI009_RETURNED_CHANNELS.index("Fz"))
+        np.testing.assert_allclose(X[:, 1, :], BNCI009_RETURNED_CHANNELS.index("Pz"))
+
+    def test_missing_requested_channel_raises(self):
+        wrapper = self._make_wrapper(channels=["Fz", "T7"])
+        X_mock, y_str, meta_df = _make_moabb_p300_output(n_epochs=5)
+        y_str[:] = "NonTarget"
+
+        mock_paradigm = MagicMock()
+        mock_paradigm.get_data.return_value = (X_mock, y_str, meta_df)
+
+        with patch("moabb.paradigms.P300", return_value=mock_paradigm):
+            with pytest.raises(ValueError, match="not present in the data"):
+                wrapper.load_epochs([1])
 
     def test_metadata_contains_subjects(self):
         wrapper = self._make_wrapper()
