@@ -398,3 +398,42 @@ coefficient would be an artefact dressed as a mechanism.
 **Rejected:** Dropping `calib_pos_rate` to obtain a clean coefficient on coverage —
 that is the confound, not a solution to it. Reporting the cluster-robust
 "significant" coefficients at N=100/150 without the sign-reversal diagnostic.
+
+---
+
+## ADR-26 — Operating points are selected on calibration data, never on the test block
+
+**Decision:** `scripts/als_character.py` selects the repetition count that maximises
+ITR on the *calibration* characters and reports test ITR at that k. The test-block
+maximum is also emitted, under column names carrying an explicit `_PEEKING` suffix.
+
+**Rationale:** With 20 test characters, character accuracy has a resolution of 0.05
+and a standard error near 0.07, so the k that maximises test ITR is substantially a
+noise draw. The test-peeked figure is ~3× the honest one (1.07 vs 0.36 bits/min) —
+large enough to change the paper's conclusion about whether the speller is viable.
+Emitting both, with the peeked one named so it cannot be quoted innocently, keeps
+the comparison available without letting it be mistaken for a result.
+
+**Rejected:** Reporting only the test maximum (standard in some BCI papers, and
+optimistic by a factor of three here); reporting only accuracy at the full 10
+repetitions (honest but discards the operating-point question the brief asked).
+
+---
+
+## ADR-27 — Degenerate gating conditions are "ungateable", not gated
+
+**Decision:** When the 25% internal validation split would hold fewer than
+`--val-floor` (8) trials, `scripts/gated_adapt.py` records the condition as
+`ungateable` and deploys the pretrained head unchanged, rather than gating on the
+available handful of trials.
+
+**Rationale:** A gate fitted to 2–6 trials is a coin flip wearing a decision rule's
+clothing, and its acceptance rate would be reported alongside genuine ones as if
+comparable. Even at the sizes that clear the floor the observed acceptance rate is
+48–89%, i.e. barely discriminating; extending that downward to N=10 would
+manufacture a number with no content. Recording ungateable cells also makes visible
+that gating is unavailable exactly where adaptation is most harmful — the smallest
+calibration sets.
+
+**Rejected:** Gating anyway with a warning; skipping the cells entirely, which
+would leave the same unexplained gaps ADR-22 exists to prevent.

@@ -859,6 +859,240 @@ returned in acquisition order.
 
 ---
 
+## 0.13 — Round C.1: split-half test of the baseline/ΔAUC correlation
+
+§0.12's correlation estimated `baseline` and `Δ = adapted − baseline` on the same
+epochs, so noise is shared between the two terms: a patient whose baseline happens
+to be underestimated has Δ correspondingly overestimated. `scripts/splithalf.py`
+splits each subject's evaluation set in half (stratified, 5 seeds), estimates the
+baseline on half A and baseline/adapted/Δ on half B, and correlates Δ_B against
+baseline_A. Permutation p is exact at n=8 and n=10.
+
+### ALS — the correlation is not a same-set artefact
+
+| N | same-set ρ | **split-half ρ** | exact p | bootstrap 95% CI |
+|---|---|---|---|---|
+| 24 | −0.810 | **−0.881** | 0.007 | [−1.00, −0.29] |
+| 48 | −0.833 | −0.738 | 0.046 | [−1.00, +0.06] |
+| 96 | −0.690 | −0.524 | 0.197 | [−1.00, +0.26] |
+| 240 | −0.714 | −0.667 | 0.083 | [−1.00, +0.20] |
+| 480 | −0.762 | −0.762 | 0.037 | [−1.00, +0.11] |
+
+The split-half estimates barely move — at N=480 they are identical to three
+decimals. **The artefact hypothesis is rejected.** But the bootstrap CI spans zero
+at four of five sizes, so with 8 patients the relationship is *real but weakly
+estimated*, not established. Only N=24 clears zero.
+
+### MI — no such relationship exists within a montage condition
+
+Within each k, across the 10 MI subjects, the correlations are **positive** at
+N=50 and N=100 (ρ ≈ +0.6, p ≈ 0.05–0.08, CI spanning zero) and only weakly negative
+at k=17. Nothing is significant, and the sign is inconsistent across sizes.
+**0/20 conditions survive.**
+
+> This was expected to survive and it does not. The reconciliation is that Round A's
+> dose-response is **exogenous** — the damage is assigned, so the k-ordering
+> supports a causal reading — whereas within-k across-subject variation is
+> **observational**. MI subjects differ in ways that evidently do not behave like
+> induced montage damage. The two analyses answer different questions, and only the
+> exogenous one is strong. §0.12's "independent replication" wording has been
+> withdrawn.
+
+---
+
+## 0.14 — Round C.2: recovery-target analysis
+
+Adapted AUC fitted against 1/N per condition (two parameters, four sizes); the
+intercept is the N→∞ asymptote. Recovery fraction is
+(asymptote − damaged baseline) / (k=0 baseline − damaged baseline): 0 means the
+asymptote sits at the damaged baseline (pure headroom), 1 means it reaches the
+undamaged baseline (full repair).
+
+| arm | condition | damaged base | asymptote | k=0 base | **recovered** |
+|---|---|---|---|---|---|
+| `stratified` | k=2 | 0.7606 | 0.7677 | 0.7714 | 66% |
+| `stratified` | k=4 | 0.7368 | 0.7473 | 0.7714 | 30% |
+| `stratified` | k=8 | 0.7068 | 0.7269 | 0.7714 | 31% |
+| `stratified` | k=17 | 0.6366 | 0.6961 | 0.7714 | 44% |
+| `stratified` | historical | 0.7034 | 0.7248 | 0.7714 | 32% |
+| `temporal_array` | k=8 | 0.7097 | 0.6806 | 0.7735 | **−46%** |
+| `temporal_array` | k=17 | 0.6353 | 0.6386 | 0.7735 | 2% |
+| `temporal_array` | historical | 0.7049 | 0.6759 | 0.7735 | **−42%** |
+
+> **Neither pure headroom nor repair.** Under stratified calibration adaptation
+> recovers 30–66% of the induced deficit and **never reaches the undamaged
+> baseline at any k**. Under `temporal_array` the recovery fraction is negative —
+> the asymptote lands *below* the damaged baseline, i.e. adaptation makes a damaged
+> model worse still.
+
+Caveat stated plainly: asymptotes extrapolated from four calibration sizes carry
+wide bootstrap CIs (±0.06 typical), so the point estimates and their ordering carry
+this argument, not the individual intervals. At k=0 the `stratified` asymptote
+(0.7773) exceeds its own baseline (0.7714) by +0.006 — with a correct montage and
+unlimited calibration data, adaptation is worth essentially nothing.
+
+---
+
+## 0.15 — Round C.3: validation-gated adaptation
+
+25% of the calibration set held out as internal validation (stratified), early
+stopping on internal val AUC, adapted head deployed **only** if it beats the
+pretrained head on internal val. Conditions whose internal val would fall below 8
+trials are reported **ungateable** rather than gated on noise — that is every
+MI N≤20 and every P300/ALS N=24 cell.
+
+`delta_auc` below is the realised gain of the *deployed* head, exactly 0 when the
+gate rejects.
+
+| cohort | k | arm | N | accept% | ΔAUC deployed | ungated ΔAUC |
+|---|---|---|---|---|---|---|
+| MI | 0 | `stratified` | 50 | 50.8% | −0.0017 | −0.0264 |
+| MI | 0 | `stratified` | 200 | 77.2% | +0.0006 | +0.0004 |
+| MI | 0 | `temporal_array` | 150 | 88.8% | **−0.0472** | −0.0767 |
+| MI | **17** | `stratified` | 200 | 86.8% | **+0.0943** | +0.0747 |
+| P300 | 0 | `stratified` | 480 | 48.0% | −0.0052 | −0.0157 |
+| ALS | 0 | `stratified` | 480 | 68.0% | +0.0005 | −0.0039 |
+| ALS | 0 | `temporal_array` | 240 | 76.2% | −0.0170 | −0.0394 |
+
+Three findings, in order of importance.
+
+**1. The acceptance rate is the result, and it says the gate does not discriminate.**
+Mean acceptance is 48% for P300, 73% for MI k=0, 81% for MI k=17, 62% for ALS —
+never near the 10–20% that a gate correctly identifying the rare beneficial cases
+would produce. It rises with N (more internal validation data → more confident
+acceptance) but not toward correctness: at MI `temporal_array` N=150 it accepts
+**88.8%** of the time on an arm whose deployed ΔAUC is −0.047.
+
+**2. Gating cannot fix a calibration set that is unrepresentative of deployment.**
+It works for `stratified` — MI k=0 losses of −0.026 become −0.002, and ALS reaches
++0.0005 — because a stratified internal split resembles the evaluation set. It
+fails for `temporal_array`, where the internal validation split is drawn from the
+same temporally contiguous block as the training portion and therefore cannot see
+the shift to a baseline-heavy evaluation set. The gate measures the wrong thing and
+confidently approves.
+
+**3. Gating *amplifies* the montage artefact.** At k=17 `stratified` N=200, gating
+raises the apparent gain from +0.0747 to **+0.0943** — now exceeding the pre-audit
+published +0.0885. A reviewer would read validation gating as added rigour; applied
+on top of a broken backbone it makes a spurious result look stronger. Any
+"principled" wrapper around adaptation must be validated on a *correct* backbone
+before its benefit is believed.
+
+---
+
+## 0.16 — Round C.4: ALS character-level accuracy and ITR
+
+Does 0.558 epoch AUC mean the speller is unusable or merely slow? Test block is the
+last 20 characters (fixed across variants); the repetition operating point is
+selected on calibration characters, never on the test block.
+
+Per-patient character accuracy, unadapted head, 10 folds averaged (chance = 1/36 =
+0.028):
+
+| patient | AUC | 1 rep | 3 | 5 | 7 | 10 | ITR@10 (bits/min) |
+|---|---|---|---|---|---|---|---|
+| 1 | 0.563 | 0.01 | 0.03 | 0.07 | 0.06 | 0.12 | 0.32 |
+| 2 | 0.592 | 0.05 | 0.12 | 0.15 | 0.23 | **0.23** | **0.90** |
+| 3 | 0.580 | 0.07 | 0.04 | 0.06 | 0.08 | 0.13 | 0.37 |
+| 4 | 0.571 | 0.01 | 0.03 | 0.03 | 0.08 | 0.07 | 0.18 |
+| 5 | 0.514 | 0.05 | 0.03 | 0.05 | 0.04 | **0.01** | 0.00 |
+| 6 | 0.540 | 0.03 | 0.02 | 0.03 | 0.10 | 0.07 | 0.17 |
+| 7 | 0.551 | 0.03 | 0.07 | 0.13 | 0.08 | 0.11 | 0.24 |
+| 8 | 0.555 | 0.06 | 0.08 | 0.10 | 0.07 | 0.08 | 0.24 |
+| **mean** | 0.558 | 0.04 | 0.05 | 0.08 | 0.09 | **0.10** | **0.30** |
+
+Variant comparison at 10 repetitions (C=5 calibration characters):
+
+| variant | epoch AUC | acc@10rep | ITR@10rep | ITR at honest k* | ITR at test-peeked k* |
+|---|---|---|---|---|---|
+| unadapted | 0.558 | 0.101 | 0.30 | 0.36 | 1.07 |
+| adapted | 0.541 | 0.098 | 0.34 | 0.31 | 1.07 |
+| gated | 0.550 | 0.101 | 0.31 | 0.44 | 1.11 |
+
+> **Unusable, not slow.** Mean character accuracy is 0.10 at the full 10
+> repetitions — above chance, but a 6×6 speller needs roughly 0.70 to be
+> practically useful. The best patient reaches 0.23. Patient 5 is at chance
+> throughout. Honest ITR is **0.3–0.4 bits/min** against 10–25 bits/min for a
+> working P300 speller: two orders of magnitude short. Neither adaptation nor
+> gating changes it.
+
+Two methodological notes. Accuracy is **non-monotone in repetitions** for several
+patients (patient 5 goes 0.05 at 1 rep to 0.01 at 10) — expected when accuracy is
+indistinguishable from noise and the test block gives a resolution of 0.05. And the
+test-peeked ITR is ~3× the honest figure (1.07 vs 0.36), which is why the operating
+point is selected on calibration characters; reporting the test maximum would have
+tripled the headline. ITR also assumes no inter-character pause, so 0.3–0.4 bits/min
+is an optimistic upper bound.
+
+---
+
+## 0.17 — Round B orthogonalized: the coverage hypothesis is refuted
+
+`scripts/orthogonal_negatives.py` holds N and the positive count fixed
+(population-matched, P = 0.385N, so `calib_pos_rate` is constant at 0.380–0.387)
+and varies only the split of the *negatives* between task-run T0 rest and
+baseline-run idle. Coverage f = n_baseline / n_negatives.
+
+**Attainability, reported before running.** Per subject: 90 positives, 84 task-run
+negatives, 60 baseline-run negatives.
+
+| N | P | negatives | f=0 | f=0.25 | f=0.5 | f=0.75 | f=1.0 |
+|---|---|---|---|---|---|---|---|
+| 50 | 19 | 31 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 100 | 38 | 62 | ✓ | ✓ | ✓ | ✓ | ✗ |
+| 150 | 58 | 92 | ✗ | ✓ | ✓ | ✗ | ✗ |
+| 200 | 77 | 123 | ✗ | ✗ | ✗ | ✗ | ✗ |
+
+N=200 is entirely unattainable: 123 negatives admit only 39 ≤ n_baseline ≤ 60, i.e.
+f ∈ [0.32, 0.49], which contains no grid point. 450 of 3,200 rows are recorded as
+`unattainable`.
+
+**Result** (10 subjects, 5 folds, 5 seeds; mean ΔAUC):
+
+| N | f=0 | f=0.25 | f=0.5 | f=0.75 | f=1.0 |
+|---|---|---|---|---|---|
+| 50 | −0.0529 | −0.0320 | **−0.0227** | −0.0260 | −0.0385 |
+| 100 | −0.0527 | **−0.0096** | −0.0110 | −0.0212 | — |
+
+The relationship is **non-monotone**. Spearman across coverage levels is +0.300
+(exact p=0.68) at N=50 and +0.200 (p=0.92) at N=100 — no monotone coverage effect
+whatsoever. The decisive contrast:
+
+| contrast | Δ | p | improved |
+|---|---|---|---|
+| f=0 → f=1.0, N=50 (the coverage hypothesis's prediction) | +0.0144 | **0.77** | 5/10 |
+| f=0 → f=0.5, N=100 | +0.0417 | 0.084 | 7/10 |
+| f=0 → f=0.25, N=100 | +0.0431 | 0.084 | 6/10 |
+| f=0.5 → f=1.0, N=50 | −0.0158 | **0.049** | 3/10 |
+
+> **The coverage hypothesis is refuted.** If baseline-idle coverage were the driver,
+> f=1.0 would be the best cell. It is not: it is indistinguishable from f=0
+> (p=0.77) and significantly *worse* than f=0.5 (p=0.049). With class ratio held
+> fixed, more baseline-run idle is not better.
+>
+> **What the data instead suggest** is that the calibration set's negative class
+> needs to span *both* idle sub-populations, and over-weighting either one hurts.
+> The optimum sits at f≈0.25–0.5. This is suggestive, not established: the
+> strongest contrasts are p≈0.08 at n=10.
+
+It does account for the arm ordering better than coverage did — each arm's position
+on this axis predicts its rank:
+
+| arm | f (fraction of negatives from baseline runs) | Phase 2 rank |
+|---|---|---|
+| `stratified` | ≈0.42 (the natural mix, near the optimum) | best |
+| `temporal_chrono` (N=100) | ≈0.76 (baseline-heavy) | intermediate |
+| `stratified_task_only` | 0.0 | poor |
+| `temporal_array` | 0.0 | poor |
+
+**Net effect on the mechanism claim.** §0.11 weakened it to "composition matters,
+driver unresolved". Round B orthogonalized keeps "composition matters", rules out
+"more baseline-idle coverage is better", and offers "negative-class provenance
+diversity" as the surviving candidate at p≈0.08. The paper cannot claim a
+coverage mechanism.
+
+---
+
 ## Reproduction commands
 
 ```bash
