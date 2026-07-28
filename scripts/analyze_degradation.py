@@ -32,6 +32,37 @@ def boot_ci(v, n=10000, seed=0):
     return float(np.percentile(m, 2.5)), float(np.percentile(m, 97.5))
 
 
+def _spearman_exact(x, y):
+    """Spearman rho with an exact permutation p-value.
+
+    At n=6 the asymptotic/t-approximation p that scipy.stats.spearmanr returns is
+    not trustworthy, and the smallest attainable two-sided exact p is 2/720 =
+    0.00278 — so a reported "p<0.0001" at this n is impossible by construction.
+    All 720 permutations are enumerated.
+    """
+    from itertools import permutations
+
+    from scipy.stats import rankdata
+
+    rx, ry = rankdata(x), rankdata(y)
+    n = len(rx)
+
+    def _rho(a, b):
+        a = np.asarray(a, float); b = np.asarray(b, float)
+        a = a - a.mean(); b = b - b.mean()
+        den = np.sqrt((a * a).sum() * (b * b).sum())
+        return float((a * b).sum() / den) if den > 0 else 0.0
+
+    obs = _rho(rx, ry)
+    count = 0
+    total = 0
+    for perm in permutations(range(n)):
+        total += 1
+        if abs(_rho(rx, ry[list(perm)])) >= abs(obs) - 1e-12:
+            count += 1
+    return obs, count / total
+
+
 def subject_level(rows, keys):
     """Collapse folds, permutation seeds and calibration seeds to per-subject means."""
     acc = defaultdict(lambda: defaultdict(list))
@@ -125,21 +156,21 @@ def main() -> None:
 
     # correlation between degradation and apparent gain
     print("\n" + "=" * 104)
-    print("Correlation of mean ΔAUC with mean baseline AUC across montage conditions")
+    print("Correlation of mean ΔAUC with mean baseline AUC ACROSS MONTAGE CONDITIONS")
+    print("n is the number of conditions (6), not the number of rows. p is exact by")
+    print("full enumeration of all 6! = 720 permutations — the asymptotic p that")
+    print("scipy returns by default is not valid at n=6.")
     print("=" * 104)
-    from scipy.stats import pearsonr, spearmanr
-
     for arm in sorted({o["split"] for o in out}):
         for N in sorted({o["calib_size"] for o in out}):
             g = [o for o in out if o["split"] == arm and o["calib_size"] == N]
             if len(g) < 4:
                 continue
-            b = [o["mean_baseline_auc"] for o in g]
-            d = [o["mean_delta_auc"] for o in g]
-            r, pr = pearsonr(b, d)
-            rho, ps = spearmanr(b, d)
+            b = np.array([o["mean_baseline_auc"] for o in g])
+            d = np.array([o["mean_delta_auc"] for o in g])
+            rho, p_exact = _spearman_exact(b, d)
             print(f"  {arm:<22} N={N:<5} n_conditions={len(g):<3} "
-                  f"pearson r={r:+.3f} (p={pr:.4f})   spearman ρ={rho:+.3f} (p={ps:.4f})")
+                  f"spearman ρ={rho:+.4f}  exact p={p_exact:.5f}")
 
     if out:
         p = Path(args.out)
