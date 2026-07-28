@@ -603,12 +603,25 @@ PhysionetMI subject are the eyes-open/eyes-closed baseline runs, all label 0, so
 discriminative head can be trained at N ≤ 60. The arm only becomes measurable at
 N ≥ 100, once calibration reaches into the task runs.
 
-### Leakage control
+### Leakage control — report k=1, not k=5
 
-`purged_stratified` minus plain `stratified` ranges from −0.008 to +0.034 across
-k ∈ {1, 2, 5} and all measurable N, with p ≥ 0.13 except two marginal negatives at
-N=10. Purging changes nothing material — but there is no advantage left to survive
-it, since `stratified` itself is at best +0.0004.
+**`purge_k=1` is the leakage control to quote.** k=5 is unmeasurable for MI at
+N≥100 (it empties the evaluation set — §0.8), so quoting a k=5 number at the sizes
+where the headline sits is quoting an absent measurement. k=1 is measurable at every
+size up to 150.
+
+| N | `purged_stratified` k=1 | plain `stratified` | difference | p |
+|---|---|---|---|---|
+| 10 | −0.0815 | −0.0803 | −0.0012 | 0.19 |
+| 20 | −0.0389 | −0.0411 | +0.0022 | 0.28 |
+| 50 | −0.0231 | −0.0264 | +0.0033 | 0.16 |
+| 100 | −0.0113 | −0.0138 | +0.0025 | 0.63 |
+| 150 | +0.0292 | −0.0048 | +0.0340 | 0.13 |
+
+k=2 agrees (−0.0034 to +0.0248, all p ≥ 0.04). k=5 is reportable only at N ≤ 50.
+
+Purging changes nothing material at any k — but there is no advantage left to
+survive it, since `stratified` itself is at best +0.0004.
 
 ### EA reference scope
 
@@ -650,6 +663,15 @@ the 17 channel positions (k ∈ {0, 2, 4, 8, 17}, 3 permutation seeds), plus the
 historical montage as its own condition. Folds `version_27..30` averaged, arms
 `stratified` and `temporal_array`, sizes {10, 50, 100, 200}, 5 calibration seeds.
 
+**Fold set, disclosed:** the sweep averages `version_27..30` — **four** folds, not
+the five used in Phase 2. `version_41` is omitted, for no better reason than that
+the sweep was built before fold 4 finished training. The dose-response is a
+within-sweep comparison so it is unaffected, but absolute baselines differ from the
+Phase 2 five-fold figures by ~0.001–0.002 (e.g. k=0 `stratified` baseline 0.7791
+here vs 0.7765/0.7833 for the five-fold N=100/150 conditions in §0.9). Any table
+that puts a degradation-sweep number beside a Phase 2 number must say which fold
+set it came from.
+
 `stratified`, mean over folds, permutation seeds and calibration seeds:
 
 | | k=0 | k=2 | k=4 | k=8 | k=17 |
@@ -660,9 +682,22 @@ historical montage as its own condition. Folds `version_27..30` averaged, arms
 | ΔAUC, N=50 | −0.0287 | −0.0259 | −0.0204 | −0.0082 | +0.0266 |
 
 Spearman ρ between mean baseline AUC and mean ΔAUC across the six montage
-conditions is **−1.000 (p<0.0001)** at N=50, 100 and 200, and −0.943 at N=10;
-Pearson r ≤ −0.98 at every size. The worse the backbone's input, the more
-head-only adaptation appears to help.
+conditions, computed on **condition means** (n=6) with an **exact permutation p**
+over all 720 orderings:
+
+| arm | N=10 | N=50 | N=100 | N=200 |
+|---|---|---|---|---|
+| `stratified` | −0.943 (p=0.017) | **−1.000 (p=0.0028)** | **−1.000 (p=0.0028)** | **−1.000 (p=0.0028)** |
+| `temporal_array` | −1.000 (p=0.0028) | −0.543 (p=0.297) | −0.943 (p=0.017) | — |
+
+**Correction:** an earlier version of this section reported "p<0.0001". That is
+impossible at n=6 — the smallest attainable two-sided exact p is 2/720 = 0.0028,
+which is what ρ=−1.000 gives. The earlier figure came from scipy's asymptotic
+approximation, which is not valid at this n, and from treating pseudo-replicated
+rows as independent. `temporal_array` at N=50 (ρ=−0.543, p=0.297) is **not**
+significant, which the earlier summary glossed over.
+
+The worse the backbone's input, the more head-only adaptation appears to help.
 
 > **Apparent adaptation gain measures backbone damage.** It is not a property of
 > the adaptation method.
@@ -795,21 +830,25 @@ Adaptation is significantly negative at N=24, 48 and 96 (p=0.008, 0.008, 0.039)
 and not significantly different from zero at N=240 and 480. **At no calibration
 size does head-only adaptation help the ALS cohort on average.**
 
-### The ALS cohort independently replicates Round A
+### Patients who fit worst gain most — an observational echo of Round A
 
 The two patients who benefit — 7 and 5 — are the two with the *lowest* baseline
 AUC. Across patients, baseline AUC and ΔAUC are negatively correlated at every
-calibration size, using natural variation in transfer quality rather than induced
-damage:
+calibration size:
 
 | N | 24 | 48 | 96 | 240 | 480 |
 |---|---|---|---|---|---|
 | Spearman ρ | −0.786 | −0.738 | −0.786 | −0.690 | −0.786 |
 | p | 0.021 | 0.037 | 0.021 | 0.058 | 0.021 |
 
-With only 8 patients this reaches p<0.05 at four of five sizes. It is the same
-relationship Round A produced by deliberately breaking the montage, arrived at
-independently.
+> **Correction to an earlier framing.** This was first written up as an
+> "independent replication" of Round A. It is not, and the distinction matters.
+> Round A *assigns* the damage — montage degradation is an exogenous manipulation,
+> so the dose-response supports a causal reading. This is *observational*:
+> patients differ in transfer quality for reasons we did not control, and both
+> quantities were estimated on the same evaluation epochs, which shares noise
+> between `baseline` and `Δ = adapted − baseline`. Round C.1 (§0.13) tests it
+> properly. Calling it a replication overstated it.
 
 ### Null checks
 

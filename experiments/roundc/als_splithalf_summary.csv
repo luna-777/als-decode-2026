@@ -1,0 +1,6 @@
+split,permute_k,calib_size,n_subjects,p_mode,rho_same_set,p_same_set,rho_split_half,p_split_half,ci_lo,ci_hi,survives,mean_baseline_a,mean_delta_b
+stratified,0,24,8,exact,-0.8095,0.02178,-0.881,0.00724,-1.0,-0.2895,True,0.5596,-0.032
+stratified,0,48,8,exact,-0.8333,0.01538,-0.7381,0.04583,-1.0,0.0633,False,0.5578,-0.0332
+stratified,0,96,8,exact,-0.6905,0.06939,-0.5238,0.19663,-1.0,0.2593,False,0.5598,-0.02
+stratified,0,240,8,exact,-0.7143,0.05759,-0.6667,0.08309,-1.0,0.2,False,0.5591,-0.0089
+stratified,0,480,8,exact,-0.7619,0.03676,-0.7619,0.03676,-1.0,0.1111,False,0.556,-0.0049
