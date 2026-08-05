@@ -46,6 +46,35 @@ class Preprocessor:
         except AttributeError:
             return default
 
+    def _get_band_args(self) -> dict[str, Any]:
+        """Resolve band-pass arguments from the config.
+
+        Precedence: an explicit top-level ``band`` key wins (that is how
+        scripts/evaluate*.py construct ad-hoc configs), otherwise the values are
+        read from the ``bandpass:`` block used by configs/preprocessing/*.yaml.
+        Falls back to the Stage 1 8-30 Hz recipe when neither is present.
+        """
+        bp = self._get("bandpass", {}) or {}
+
+        def _bp(key: str, default: Any) -> Any:
+            try:
+                v = bp.get(key, default)
+            except AttributeError:
+                return default
+            return v if v is not None else default
+
+        band = self._get("band", None)
+        if band is None:
+            band = [_bp("low", 8.0), _bp("high", 30.0)]
+
+        return {
+            "l_freq": float(band[0]),
+            "h_freq": float(band[1]),
+            "method": str(_bp("method", "fir")),
+            "phase": str(_bp("phase", "zero")),
+            "fir_window": str(_bp("fir_window", "hamming")),
+        }
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -75,10 +104,9 @@ class Preprocessor:
         if not self._fitted:
             raise RuntimeError("Preprocessor.transform called before fit()")
 
-        band = self._get("band", [8.0, 30.0])
         sfreq = self._get("keep_sfreq", 160.0)
 
-        X_out = bandpass_filter(X, sfreq=float(sfreq), l_freq=float(band[0]), h_freq=float(band[1]))
+        X_out = bandpass_filter(X, sfreq=float(sfreq), **self._get_band_args())
 
         if self._scaler is not None:
             X_out = self._scaler.transform(X_out)
