@@ -437,3 +437,73 @@ calibration sets.
 
 **Rejected:** Gating anyway with a warning; skipping the cells entirely, which
 would leave the same unexplained gaps ADR-22 exists to prevent.
+
+## ADR-28 — The band-pass config was never read; P300 and ALS were re-run, MI was proved unchanged
+
+**Status:** accepted, 2026-08-05 · fixing commit `d90d18a` · report
+[`docs/refilter_rerun.md`](refilter_rerun.md)
+
+**Context:** Every P300 and ALS result in the repo up to commit `1934e62` was computed
+under an effective ≈6.4–24 Hz passband, not the documented 1–24 Hz at 128 Hz. Two
+independent faults compounded:
+
+1. `Preprocessor.transform()` resolved the band via `self._get("band", [8.0, 30.0])`,
+   but no preprocessing config defines a top-level `band` key — `mi_8_30.yaml` and
+   `p300_1_24.yaml` both nest the values under `bandpass:`. The hardcoded fallback
+   therefore applied to every paradigm and the whole `bandpass:` block was dead,
+   `method` / `phase` / `fir_window` included.
+2. The `version_31`…`version_40` P300 folds were launched against the default
+   `configs/config.yaml`, whose `defaults:` list selects `preprocessing: mi_8_30`.
+   `config_stage2.yaml` was correct but unused, so `keep_sfreq=160.0` was applied to
+   128 Hz data and `amplitude_reject_uv=150.0` where 100.0 was intended.
+
+An 8–30 Hz filter designed for 160 Hz applied to 128 Hz data realizes 8×128/160 = 6.4 to
+30×128/160 = 24 Hz. Measured on a real epoch, output/input RMS was 0.006 at 2 Hz and
+0.085 at 5 Hz — most of the P300's own frequency content was being removed.
+
+**Decision:** Fix the resolution path only, and re-run Stage 2 and Stage 3 for P300 and
+ALS. `_get_band_args()` now reads `bandpass.{low,high,method,phase,fir_window}`, with an
+explicit top-level `band` key taking precedence so the ad-hoc `cfg_pp` dicts in
+`scripts/evaluate.py` and `scripts/evaluate_stage2.py` keep working. No config file and
+no default was changed: `config_stage2.yaml` was already correct, so the remedy for
+fault 2 is an explicit run command, which keeps the fix visible at the call site.
+
+**MI was verified unchanged rather than re-run.** `mi_8_30.yaml`'s `bandpass:` block is
+8–30 Hz fir/zero/hamming, identical to the old fallback, so the fix is provably a no-op
+for MI. A seeded `(32,17,320)` float32 array through `version_28/preprocessor.pkl` yields
+output sha256 `e599954b933f8cd30104b3d5675a9aa764e2834cb9d30b11d8ddf80e3f8c552c` both
+before and after, with `np.array_equal(before, after) == True` — exact equality, not
+`allclose`. The MI rows of the regenerated `gated_summary.csv` are byte-identical to the
+archived ones.
+
+**Re-run:** ten BNCI2014_009 LOSO-10 folds (`version_42`…`version_51`) with
+`preprocessing=p300_1_24 evaluation=p300_loso_full training=default seed=42`, then
+`adapt_stage3.py` for p300 and als, `als_character.py`, `gated_adapt.py` for both, and
+all reducers. `training=default` is pinned deliberately: `config_stage2.yaml` selects
+`training: stage2` at lr 5e-4 whereas the archived runs used lr 1e-3, and pinning keeps
+the preprocessing group the only variable that moved. All five row counts match the
+archive exactly (1,750 / 10,000 / 1,520 / 500 / 4,000), so no grid changed.
+
+**Archived:** the superseded P300/ALS CSVs and the two derived figures were **moved, not
+deleted**, to `experiments/stage3/archive_prefilter_fix/` with a README recording the
+effective passband, the date and the fixing commit — following the `archive_pre_audit/`
+precedent. `git diff -M` confirms all eight CSVs are 100 %-similarity renames. Per-fold
+checkpoint sha256s are recorded in `experiments/stage3/refilter_fold_manifest.csv`
+because `lightning_logs/` is gitignored.
+
+**Consequences:** Stage 2 mean val AUC 0.7764 → 0.8994 (10/10 subjects improved,
+Wilcoxon p = 0.00195). P300 cohort baseline 0.716 → 0.901; adaptation remains negative
+at every calibration size and still attenuates with N, at roughly a quarter of its former
+magnitude. **ALS cohort baseline 0.557 → 0.711**, character accuracy 0.058 → 0.226
+against a 0.028 chance floor, ITR 0.358 → 4.038 bits/min: the claim that the ALS cohort
+sits near chance and thereby bounds what the study can claim no longer holds. ALS ΔAUC at
+N=480 flips −0.0039 → +0.0067, but the bootstrap CI and the exact Wilcoxon p (0.0781,
+n=8) disagree, so this is reported as "no longer detectably harmful", not as a gain.
+
+**Rejected:** re-running MI as well, which would have burned compute to reproduce a
+provably identical result and would have broken the read-only-on-MI constraint; changing
+`configs/config.yaml`'s `preprocessing` default, which would have hidden the fault rather
+than surfacing it at the call site; and bundling the FIR-filter-length fix (§F.1 of the
+report — a 1–24 Hz filter needs 423 taps but a P300 epoch is 102 samples) into this
+commit, which would have repeated the mistake `63ce683` made by mixing a correction with
+an unrelated change.

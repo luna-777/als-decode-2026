@@ -39,3 +39,6 @@ results/
 
 # lighting logs 
 lightning_logs/
+# Symlink view of a single generation of folds, built by the re-filter verification
+# so loso_fold_for_subject sees one fold per subject. Regenerable; not an artifact.
+lightning_logs_refilter/
